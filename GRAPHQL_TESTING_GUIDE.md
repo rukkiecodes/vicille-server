@@ -384,10 +384,18 @@ mutation CreateMeasurements {
 mutation CreateOrder {
   createOrder(
     input: {
-      subscriptionId: "sub-001"
-      measurementId: "meas-001"
+      user: "user-001"
+      subscription: "sub-001"
+      measurement: "meas-001"
       orderType: "SUBSCRIPTION"
       deliveryMethod: "STANDARD"
+      deliveryAddress: {
+        address: "45 Victoria Island"
+        city: "Lagos"
+        state: "Lagos"
+        country: "Nigeria"
+      }
+      notes: "Standard delivery preferred"
     }
   ) {
     id
@@ -396,6 +404,8 @@ mutation CreateOrder {
     status
     estimatedDeliveryDate
     totalAmount
+    paymentStatus
+    deliveryMethod
     stylingWindow {
       openedAt
       closedAt
@@ -411,14 +421,16 @@ mutation CreateOrder {
   "data": {
     "createOrder": {
       "id": "order-001",
-      "orderNumber": "ORD-2024-0001",
+      "orderNumber": "VC-2026-0001",
       "clientTag": "SJ-001",
       "status": "STYLING_IN_PROGRESS",
-      "estimatedDeliveryDate": "2024-02-28T00:00:00Z",
+      "estimatedDeliveryDate": "2026-02-28T00:00:00Z",
       "totalAmount": 45000,
+      "paymentStatus": "PENDING",
+      "deliveryMethod": "STANDARD",
       "stylingWindow": {
-        "openedAt": "2024-02-14T10:35:00Z",
-        "closedAt": "2024-02-21T23:59:59Z",
+        "openedAt": "2026-02-14T10:35:00Z",
+        "closedAt": "2026-02-21T23:59:59Z",
         "isOpen": true
       }
     }
@@ -729,8 +741,7 @@ query TestAuth {
 mutation BadInput {
   createOrder(
     input: {
-      subscriptionId: "invalid-id"
-      measurementId: ""
+      user: ""
       orderType: "INVALID_TYPE"
     }
   ) {

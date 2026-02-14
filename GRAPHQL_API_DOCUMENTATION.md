@@ -639,9 +639,25 @@ query GetOrdersByStatus {
 mutation CreateOrder {
   createOrder(
     input: {
+      user: "user-uuid-123"
       subscription: "subscription-uuid"
       measurement: "measurement-uuid"
       orderType: "SUBSCRIPTION"
+      deliveryMethod: "STANDARD"
+      deliveryAddress: {
+        address: "123 Main Street, Lagos"
+        city: "Lagos"
+        state: "Lagos"
+        country: "Nigeria"
+        postalCode: "101001"
+        phone: "+234801234567"
+        landmark: "Near Market"
+      }
+      productionCycle: {
+        month: 2
+        year: 2026
+      }
+      notes: "Please ensure quality seams"
       items: [
         {
           category: "DRESS"
@@ -660,20 +676,34 @@ mutation CreateOrder {
             notes: "Add belt loops"
           }
           quantity: 1
+          unitPrice: 45000
         }
       ]
-      deliveryAddress: {
-        address: "123 Main Street"
-        phone: "+234801234567"
-        landmark: "Near Market"
-      }
-      notes: "Please ensure quality seams"
     }
   ) {
     id
     orderNumber
+    clientTag
+    user
     status
+    orderType
     totalAmount
+    paymentStatus
+    deliveryMethod
+    estimatedDeliveryDate
+    deliveryAddress
+    productionCycle {
+      cycleNumber
+      month
+      year
+    }
+    stylingWindow {
+      openedAt
+      closedAt
+      isOpen
+    }
+    createdAt
+    updatedAt
   }
 }
 ```

@@ -318,21 +318,35 @@ mutation {
 **Place an order for styling**
 
 ```graphql
-mutation {
+mutation CreateOrder {
   createOrder(
     input: {
-      subscriptionId: "subscription-uuid"
-      measurementId: "measurement-uuid"
+      user: "user-uuid-123"
+      subscription: "subscription-uuid"
+      measurement: "measurement-uuid"
       orderType: "SUBSCRIPTION"
       deliveryMethod: "STANDARD"
+      deliveryAddress: {
+        address: "45 Victoria Island, Lagos"
+        city: "Lagos"
+        state: "Lagos"
+        country: "Nigeria"
+        postalCode: "101001"
+      }
+      notes: "Standard delivery"
     }
   ) {
     id
     orderNumber
     clientTag
+    user
     status
-    estimatedDeliveryDate
+    orderType
     totalAmount
+    paymentStatus
+    deliveryMethod
+    estimatedDeliveryDate
+    createdAt
   }
 }
 ```

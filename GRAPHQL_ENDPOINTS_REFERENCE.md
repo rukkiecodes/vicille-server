@@ -68,7 +68,7 @@
 ### Mutations
 | Mutation | Purpose | Input | Returns |
 |----------|---------|-------|---------|
-| `createOrder` | Create new order | `input: {subscriptionId!, measurementId!, orderType!, deliveryMethod?}` | Order with id, status |
+| `createOrder` | Create new order | `input: {user!, subscription?, measurement?, orderType!, deliveryMethod?, deliveryAddress?, notes?, items?}` | Order with id, status, totalAmount |
 | `updateOrderStatus` | Change order status (tailor) | `orderId!, newStatus!, notes?` | Order with statusHistory |
 | `cancelOrder` | Cancel styling phase order | `orderId!, reason?` | `{success, refundAmount}` |
 | `completeProduction` | Mark production done | `orderId!` | Order with new status |

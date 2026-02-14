@@ -1,118 +1,99 @@
+import { getFirestore } from '../../infrastructure/database/firebase.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
 import { generateOrderNumber, generateClientTag } from '../../core/utils/randomCode.js';
 import { ORDER_STATUS, ORDER_STATUS_TRANSITIONS, isValidTransition } from '../../core/constants/orderStatus.js';
 
-// Order Entity class
-class Model {
-  // Get parsed production cycle
-  get productionCycleParsed() {
-    return this.productionCycle ? JSON.parse(this.productionCycle) : null;
-  }
+const COLLECTION = 'orders';
+const CACHE_TTL = 3600; // 1 hour
 
-  // Get parsed styling window
-  get stylingWindowParsed() {
-    return this.stylingWindow ? JSON.parse(this.stylingWindow) : {
-      openedAt: null,
-      closedAt: null,
-      isOpen: true,
-      lockedAt: null,
-    };
-  }
+// Helper: Parse JSON fields from Firestore
+function parseJsonFields(order) {
+  if (!order) return null;
+  return {
+    ...order,
+    productionCycle: typeof order.productionCycle === 'string' ? JSON.parse(order.productionCycle) : order.productionCycle,
+    stylingWindow: typeof order.stylingWindow === 'string' ? JSON.parse(order.stylingWindow) : order.stylingWindow,
+    statusHistory: typeof order.statusHistory === 'string' ? JSON.parse(order.statusHistory) : order.statusHistory,
+    deliveryAddress: typeof order.deliveryAddress === 'string' ? JSON.parse(order.deliveryAddress) : order.deliveryAddress,
+    deliveryProof: typeof order.deliveryProof === 'string' ? JSON.parse(order.deliveryProof) : order.deliveryProof,
+    cancellation: typeof order.cancellation === 'string' ? JSON.parse(order.cancellation) : order.cancellation,
+  };
+}
 
-  // Get parsed status history
-  get statusHistoryParsed() {
-    return this.statusHistory ? JSON.parse(this.statusHistory) : [];
+// Helper: Stringify JSON fields for Firestore
+function stringifyJsonFields(data) {
+  const result = { ...data };
+  if (result.productionCycle && typeof result.productionCycle === 'object') {
+    result.productionCycle = JSON.stringify(result.productionCycle);
   }
-
-  // Get parsed delivery address
-  get deliveryAddressParsed() {
-    return this.deliveryAddress ? JSON.parse(this.deliveryAddress) : null;
+  if (result.stylingWindow && typeof result.stylingWindow === 'object') {
+    result.stylingWindow = JSON.stringify(result.stylingWindow);
   }
-
-  // Get parsed delivery proof
-  get deliveryProofParsed() {
-    return this.deliveryProof ? JSON.parse(this.deliveryProof) : null;
+  if (result.statusHistory && typeof result.statusHistory === 'object') {
+    result.statusHistory = JSON.stringify(result.statusHistory);
   }
-
-  // Get parsed cancellation
-  get cancellationParsed() {
-    return this.cancellation ? JSON.parse(this.cancellation) : null;
+  if (result.deliveryAddress && typeof result.deliveryAddress === 'object') {
+    result.deliveryAddress = JSON.stringify(result.deliveryAddress);
   }
-
-  // Check if styling window is open
-  get isStylingWindowOpen() {
-    const stylingWindow = this.stylingWindowParsed;
-    return stylingWindow?.isOpen && this.status === ORDER_STATUS.STYLING_IN_PROGRESS;
+  if (result.deliveryProof && typeof result.deliveryProof === 'object') {
+    result.deliveryProof = JSON.stringify(result.deliveryProof);
   }
-
-  // Check if order can be cancelled
-  get canBeCancelled() {
-    return this.status === ORDER_STATUS.STYLING_IN_PROGRESS;
+  if (result.cancellation && typeof result.cancellation === 'object') {
+    result.cancellation = JSON.stringify(result.cancellation);
   }
+  return result;
+}
 
-  // Check if accessories can be purchased
-  get canPurchaseAccessories() {
-    return this.status === ORDER_STATUS.PRODUCTION_IN_PROGRESS;
-  }
-
-  // Check if status transition is valid
-  canTransitionTo(newStatus) {
-    return isValidTransition(this.status, newStatus);
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      orderNumber: this.orderNumber,
-      clientTag: this.clientTag,
-      user: this.user,
-      subscription: this.subscription,
-      measurement: this.measurement,
-      orderType: this.orderType,
-      productionCycle: this.productionCycleParsed,
-      stylingWindow: this.stylingWindowParsed,
-      status: this.status,
-      statusHistory: this.statusHistoryParsed,
-      estimatedProductionStart: this.estimatedProductionStart,
-      estimatedCompletionDate: this.estimatedCompletionDate,
-      estimatedDeliveryDate: this.estimatedDeliveryDate,
-      actualDeliveryDate: this.actualDeliveryDate,
-      totalAmount: this.totalAmount,
-      amountPaid: this.amountPaid,
-      outstandingBalance: this.outstandingBalance,
-      paymentStatus: this.paymentStatus,
-      deliveryAddress: this.deliveryAddressParsed,
-      deliveryMethod: this.deliveryMethod,
-      trackingNumber: this.trackingNumber,
-      dispatchedAt: this.dispatchedAt,
-      deliveredAt: this.deliveredAt,
-      deliveredBy: this.deliveredBy,
-      deliveryProof: this.deliveryProofParsed,
-      cancellation: this.cancellationParsed,
-      notes: this.notes,
-      internalNotes: this.internalNotes,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isStylingWindowOpen: this.isStylingWindowOpen,
-      canBeCancelled: this.canBeCancelled,
-      canPurchaseAccessories: this.canPurchaseAccessories,
-    };
+// Helper: Cache management
+async function cacheOrder(order) {
+  try {
+    const redis = getRedisClient();
+    if (redis && order?.id) {
+      await redis.setex(
+        `order:${order.id}`,
+        CACHE_TTL,
+        JSON.stringify(order)
+      );
+    }
+  } catch (error) {
+    // Cache errors are non-fatal
   }
 }
 
-// Order Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
+async function getCachedOrder(id) {
+  try {
+    const redis = getRedisClient();
+    if (redis) {
+      const cached = await redis.get(`order:${id}`);
+      if (cached) return JSON.parse(cached);
+    }
+  } catch (error) {
+    // Cache errors are non-fatal
+  }
+  return null;
+}
+
+async function clearOrderCache(id) {
+  try {
+    const redis = getRedisClient();
+    if (redis && id) {
+      await redis.del(`order:${id}`);
+    }
+  } catch (error) {
+    // Cache errors are non-fatal
+  }
+}
+
+// Order Model
 const OrderModel = {
   /**
    * Create a new order
    */
   async create(orderData) {
-    const repo = await getOrderRepository();
-
+    const db = getFirestore();
     const now = new Date();
+    const docRef = db.collection(COLLECTION).doc();
+
     const orderNumber = orderData.orderNumber || generateOrderNumber();
     const clientTag = orderData.clientTag || generateClientTag();
 
@@ -123,54 +104,67 @@ const OrderModel = {
       notes: 'Order created',
     }];
 
-    const order = await repo.save({
+    const orderWithDefaults = stringifyJsonFields({
       orderNumber,
       clientTag,
       user: orderData.user,
-      subscription: orderData.subscription,
-      measurement: orderData.measurement,
+      subscription: orderData.subscription || null,
+      measurement: orderData.measurement || null,
       orderType: orderData.orderType,
-      productionCycle: orderData.productionCycle ? JSON.stringify(orderData.productionCycle) : null,
-      stylingWindow: JSON.stringify(orderData.stylingWindow || {
+      productionCycle: orderData.productionCycle || null,
+      stylingWindow: orderData.stylingWindow || {
         openedAt: now.toISOString(),
         closedAt: null,
         isOpen: true,
         lockedAt: null,
-      }),
+      },
       status: orderData.status || ORDER_STATUS.STYLING_IN_PROGRESS,
-      statusHistory: JSON.stringify(initialStatusHistory),
-      estimatedProductionStart: orderData.estimatedProductionStart,
-      estimatedCompletionDate: orderData.estimatedCompletionDate,
-      estimatedDeliveryDate: orderData.estimatedDeliveryDate,
-      actualDeliveryDate: orderData.actualDeliveryDate,
+      statusHistory: initialStatusHistory,
+      estimatedProductionStart: orderData.estimatedProductionStart || null,
+      estimatedCompletionDate: orderData.estimatedCompletionDate || null,
+      estimatedDeliveryDate: orderData.estimatedDeliveryDate || null,
+      actualDeliveryDate: orderData.actualDeliveryDate || null,
       totalAmount: orderData.totalAmount || 0,
       amountPaid: orderData.amountPaid || 0,
       outstandingBalance: orderData.outstandingBalance || 0,
       paymentStatus: orderData.paymentStatus || 'pending',
-      deliveryAddress: orderData.deliveryAddress ? JSON.stringify(orderData.deliveryAddress) : null,
+      deliveryAddress: orderData.deliveryAddress || null,
       deliveryMethod: orderData.deliveryMethod || 'standard',
-      trackingNumber: orderData.trackingNumber,
-      dispatchedAt: orderData.dispatchedAt,
-      deliveredAt: orderData.deliveredAt,
-      deliveredBy: orderData.deliveredBy,
-      deliveryProof: orderData.deliveryProof ? JSON.stringify(orderData.deliveryProof) : null,
-      cancellation: orderData.cancellation ? JSON.stringify(orderData.cancellation) : null,
-      notes: orderData.notes,
-      internalNotes: orderData.internalNotes,
+      trackingNumber: orderData.trackingNumber || null,
+      dispatchedAt: orderData.dispatchedAt || null,
+      deliveredAt: orderData.deliveredAt || null,
+      deliveredBy: orderData.deliveredBy || null,
+      deliveryProof: orderData.deliveryProof || null,
+      cancellation: orderData.cancellation || null,
+      notes: orderData.notes || null,
+      internalNotes: orderData.internalNotes || null,
       createdAt: now,
       updatedAt: now,
     });
 
-    return order;
+    await docRef.set(orderWithDefaults);
+    const created = parseJsonFields({ id: docRef.id, ...orderWithDefaults });
+    
+    await cacheOrder(created);
+    return created;
   },
 
   /**
    * Find order by ID
    */
   async findById(id) {
-    const repo = await getOrderRepository();
-    const order = await repo.fetch(id);
-    if (!order || !order.orderNumber) return null;
+    // Try cache first
+    const cached = await getCachedOrder(id);
+    if (cached) return cached;
+
+    const db = getFirestore();
+    const doc = await db.collection(COLLECTION).doc(id).get();
+    
+    if (!doc.exists || !doc.data().orderNumber) return null;
+    
+    const order = parseJsonFields({ id: doc.id, ...doc.data() });
+    await cacheOrder(order);
+    
     return order;
   },
 
@@ -178,10 +172,18 @@ const OrderModel = {
    * Find order by order number
    */
   async findByOrderNumber(orderNumber) {
-    const repo = await getOrderRepository();
-    const order = await repo.search()
-      .where('orderNumber').equals(orderNumber)
-      .return.first();
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('orderNumber', '==', orderNumber)
+      .limit(1);
+    
+    const snapshot = await query.get();
+    if (snapshot.empty) return null;
+    
+    const doc = snapshot.docs[0];
+    const order = parseJsonFields({ id: doc.id, ...doc.data() });
+    await cacheOrder(order);
+    
     return order;
   },
 
@@ -189,10 +191,18 @@ const OrderModel = {
    * Find order by client tag
    */
   async findByClientTag(clientTag) {
-    const repo = await getOrderRepository();
-    const order = await repo.search()
-      .where('clientTag').equals(clientTag)
-      .return.first();
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('clientTag', '==', clientTag)
+      .limit(1);
+    
+    const snapshot = await query.get();
+    if (snapshot.empty) return null;
+    
+    const doc = snapshot.docs[0];
+    const order = parseJsonFields({ id: doc.id, ...doc.data() });
+    await cacheOrder(order);
+    
     return order;
   },
 
@@ -200,136 +210,150 @@ const OrderModel = {
    * Update order by ID
    */
   async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getOrderRepository();
-    const order = await repo.fetch(id);
-    if (!order || !order.orderNumber) return null;
+    const db = getFirestore();
+    const docRef = db.collection(COLLECTION).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists || !doc.data().orderNumber) return null;
 
-    // Serialize complex objects
-    const jsonFields = ['productionCycle', 'stylingWindow', 'statusHistory', 'deliveryAddress', 'deliveryProof', 'cancellation'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
+    const updateWithDefaults = stringifyJsonFields({
+      ...updateData,
+      updatedAt: new Date(),
+    });
 
-    // Update fields
-    Object.assign(order, updateData, { updatedAt: new Date() });
-    await repo.save(order);
-
-    return options.new !== false ? order : null;
+    await docRef.update(updateWithDefaults);
+    
+    const updated = doc.data();
+    const result = parseJsonFields({ id: doc.id, ...updated, ...updateWithDefaults });
+    
+    await clearOrderCache(id);
+    await cacheOrder(result);
+    
+    return result;
   },
 
   /**
    * Update order status
    */
   async updateStatus(id, newStatus, changedBy, notes) {
-    const repo = await getOrderRepository();
-    const order = await repo.fetch(id);
-    if (!order || !order.orderNumber) return null;
+    const db = getFirestore();
+    const docRef = db.collection(COLLECTION).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists || !doc.data().orderNumber) return null;
 
-    if (!order.canTransitionTo(newStatus)) {
+    const order = parseJsonFields({ id: doc.id, ...doc.data() });
+    
+    if (!isValidTransition(order.status, newStatus)) {
       throw new Error(`Cannot transition from ${order.status} to ${newStatus}`);
     }
 
     const previousStatus = order.status;
-    order.status = newStatus;
+    const updateData = { status: newStatus };
 
     // Update styling window if transitioning to production
     if (newStatus === ORDER_STATUS.PRODUCTION_IN_PROGRESS) {
-      const stylingWindow = order.stylingWindowParsed;
+      const stylingWindow = order.stylingWindow || {};
       stylingWindow.isOpen = false;
       stylingWindow.lockedAt = new Date().toISOString();
-      order.stylingWindow = JSON.stringify(stylingWindow);
+      updateData.stylingWindow = stylingWindow;
     }
 
     // Add to status history
-    const statusHistory = order.statusHistoryParsed;
+    const statusHistory = order.statusHistory || [];
     statusHistory.push({
       status: newStatus,
       changedBy,
       changedAt: new Date().toISOString(),
       notes: notes || `Status changed from ${previousStatus} to ${newStatus}`,
     });
-    order.statusHistory = JSON.stringify(statusHistory);
-    order.updatedAt = new Date();
+    updateData.statusHistory = statusHistory;
+    updateData.updatedAt = new Date();
 
-    await repo.save(order);
-    return order;
+    return this.findByIdAndUpdate(id, updateData, { new: true });
   },
 
   /**
    * Cancel order
    */
   async cancelOrder(id, reason, cancelledBy, refundAmount = 0) {
-    const repo = await getOrderRepository();
-    const order = await repo.fetch(id);
-    if (!order || !order.orderNumber) return null;
+    const db = getFirestore();
+    const docRef = db.collection(COLLECTION).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists || !doc.data().orderNumber) return null;
 
-    if (!order.canBeCancelled) {
+    const order = parseJsonFields({ id: doc.id, ...doc.data() });
+
+    // Check if order can be cancelled
+    if (order.status !== ORDER_STATUS.STYLING_IN_PROGRESS) {
       throw new Error('Order cannot be cancelled at this stage');
     }
 
-    order.status = ORDER_STATUS.CANCELLED;
-    order.cancellation = JSON.stringify({
-      cancelledAt: new Date().toISOString(),
-      reason,
-      cancelledBy,
-      refundAmount,
-      refundStatus: refundAmount > 0 ? 'pending' : null,
-    });
+    const updateData = {
+      status: ORDER_STATUS.CANCELLED,
+      cancellation: {
+        cancelledAt: new Date().toISOString(),
+        reason,
+        cancelledBy,
+        refundAmount,
+        refundStatus: refundAmount > 0 ? 'pending' : null,
+      },
+    };
 
-    const statusHistory = order.statusHistoryParsed;
+    const statusHistory = order.statusHistory || [];
     statusHistory.push({
       status: ORDER_STATUS.CANCELLED,
       changedBy: cancelledBy,
       changedAt: new Date().toISOString(),
       notes: `Order cancelled: ${reason}`,
     });
-    order.statusHistory = JSON.stringify(statusHistory);
-    order.updatedAt = new Date();
+    updateData.statusHistory = statusHistory;
+    updateData.updatedAt = new Date();
 
-    await repo.save(order);
-    return order;
+    return this.findByIdAndUpdate(id, updateData, { new: true });
   },
 
   /**
    * Find orders by user
    */
   async findByUser(userId, options = {}) {
-    const repo = await getOrderRepository();
+    const db = getFirestore();
     const limit = options.limit || 10;
 
-    const orders = await repo.search()
-      .where('user').equals(userId)
-      .sortBy('createdAt', 'DESC')
-      .return.page(0, limit);
+    const query = db.collection(COLLECTION)
+      .where('user', '==', userId)
+      .orderBy('createdAt', 'desc')
+      .limit(limit);
 
-    return orders;
+    const snapshot = await query.get();
+    return snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
   },
 
   /**
    * Find orders in styling window
    */
   async findInStylingWindow() {
-    const repo = await getOrderRepository();
-    const orders = await repo.search()
-      .where('status').equals(ORDER_STATUS.STYLING_IN_PROGRESS)
-      .return.all();
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('status', '==', ORDER_STATUS.STYLING_IN_PROGRESS);
 
-    // Filter for open styling windows
-    return orders.filter(order => order.stylingWindowParsed?.isOpen);
+    const snapshot = await query.get();
+    return snapshot.docs
+      .map(doc => parseJsonFields({ id: doc.id, ...doc.data() }))
+      .filter(order => order.stylingWindow?.isOpen);
   },
 
   /**
    * Find orders by cycle
    */
   async findByCycle(month, year) {
-    const repo = await getOrderRepository();
-    const orders = await repo.search().return.all();
-
-    // Filter by production cycle
+    const db = getFirestore();
+    const snapshot = await db.collection(COLLECTION).get();
+    
+    const orders = snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
     return orders.filter(order => {
-      const cycle = order.productionCycleParsed;
+      const cycle = order.productionCycle;
       return cycle && cycle.month === month && cycle.year === year;
     });
   },
@@ -338,72 +362,97 @@ const OrderModel = {
    * Find orders by status
    */
   async findByStatus(status) {
-    const repo = await getOrderRepository();
-    return repo.search()
-      .where('status').equals(status)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('status', '==', status)
+      .orderBy('createdAt', 'desc');
+
+    const snapshot = await query.get();
+    return snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
   },
 
   /**
    * Find all orders with filters and pagination
    */
   async find(query = {}, options = {}) {
-    const repo = await getOrderRepository();
-    let search = repo.search();
+    const db = getFirestore();
+    let firestoreQuery = db.collection(COLLECTION);
 
     // Apply filters
     if (query.status) {
-      search = search.where('status').equals(query.status);
+      firestoreQuery = firestoreQuery.where('status', '==', query.status);
     }
     if (query.orderType) {
-      search = search.where('orderType').equals(query.orderType);
+      firestoreQuery = firestoreQuery.where('orderType', '==', query.orderType);
     }
     if (query.user) {
-      search = search.where('user').equals(query.user);
+      firestoreQuery = firestoreQuery.where('user', '==', query.user);
     }
     if (query.paymentStatus) {
-      search = search.where('paymentStatus').equals(query.paymentStatus);
+      firestoreQuery = firestoreQuery.where('paymentStatus', '==', query.paymentStatus);
     }
 
-    // Apply pagination
+    firestoreQuery = firestoreQuery.orderBy('createdAt', 'desc');
+
     const page = options.page || 1;
     const limit = options.limit || 20;
     const offset = (page - 1) * limit;
 
-    const orders = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
+    const countQuery = await firestoreQuery.count().get();
+    const total = countQuery.data().count;
 
-    return orders;
+    const querySnapshot = await firestoreQuery
+      .offset(offset)
+      .limit(limit)
+      .get();
+
+    const orders = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })).map(parseJsonFields);
+
+    return {
+      data: orders,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
   },
 
   /**
    * Count orders
    */
   async countDocuments(query = {}) {
-    const repo = await getOrderRepository();
-    let search = repo.search();
+    const db = getFirestore();
+    let firestoreQuery = db.collection(COLLECTION);
 
     if (query.status) {
-      search = search.where('status').equals(query.status);
+      firestoreQuery = firestoreQuery.where('status', '==', query.status);
     }
     if (query.orderType) {
-      search = search.where('orderType').equals(query.orderType);
+      firestoreQuery = firestoreQuery.where('orderType', '==', query.orderType);
     }
     if (query.user) {
-      search = search.where('user').equals(query.user);
+      firestoreQuery = firestoreQuery.where('user', '==', query.user);
+    }
+    if (query.paymentStatus) {
+      firestoreQuery = firestoreQuery.where('paymentStatus', '==', query.paymentStatus);
     }
 
-    return search.return.count();
+    const countQuery = await firestoreQuery.count().get();
+    return countQuery.data().count;
   },
 
   /**
    * Delete order (hard delete)
    */
   async delete(id) {
-    const repo = await getOrderRepository();
-    await repo.remove(id);
+    const db = getFirestore();
+    await db.collection(COLLECTION).doc(id).delete();
+    await clearOrderCache(id);
   },
 };
 
