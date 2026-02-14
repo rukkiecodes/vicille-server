@@ -823,26 +823,49 @@ query ListSubscriptions {
 ### Subscribe to Plan
 ```graphql
 mutation Subscribe {
-  createSubscription(
-    input: {
-      plan: "plan-uuid"
-      billingCycle: "MONTHLY"
-      paymentMethod: {
-        type: "CARD"
-        provider: "STRIPE"
-      }
-    }
-  ) {
+  subscribe(planId: "plan-uuid-123") {
     id
     status
-    planDetails {
-      name
-    }
+    user
+    plan
+    isActive
+    paymentStatus
     startDate
+    endDate
+    planDetails {
+      id
+      name
+      slug
+      pricing {
+        amount
+        currency
+        billingCycle
+        trialDays
+      }
+      features {
+        itemsPerCycle
+        fabricOptions
+        styleConsultation
+        prioritySupport
+      }
+    }
+    billing {
+      nextBillingDate
+      lastBillingDate
+      failedAttempts
+      gracePeriodEnd
+    }
     currentCycle {
+      cycleNumber
       stylingWindowOpen
       stylingWindowClose
+      productionStart
+      estimatedDelivery
     }
+    isStylingWindowOpen
+    daysUntilNextBilling
+    createdAt
+    updatedAt
   }
 }
 ```

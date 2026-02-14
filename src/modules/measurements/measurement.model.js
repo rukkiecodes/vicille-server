@@ -1,102 +1,144 @@
+import { getFirestore } from '../../infrastructure/database/firebase.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
 
-// Measurement Entity class
-class Model {
-  // Get parsed capturedBy object
-  get capturedByParsed() {
-    return this.capturedBy ? JSON.parse(this.capturedBy) : null;
-  }
+const COLLECTION = 'measurements';
+const CACHE_TTL = 3600; // 1 hour
 
-  // Get parsed measurements object
-  get measurementsParsed() {
-    return this.measurements ? JSON.parse(this.measurements) : null;
-  }
+// Helper: Parse JSON fields from Firestore
+function parseJsonFields(measurement) {
+  if (!measurement) return null;
+  return {
+    ...measurement,
+    capturedBy: typeof measurement.capturedBy === 'string' ? JSON.parse(measurement.capturedBy) : measurement.capturedBy,
+    measurements: typeof measurement.measurements === 'string' ? JSON.parse(measurement.measurements) : measurement.measurements,
+    delta: typeof measurement.delta === 'string' ? JSON.parse(measurement.delta) : measurement.delta,
+  };
+}
 
-  // Get parsed delta object
-  get deltaParsed() {
-    return this.delta ? JSON.parse(this.delta) : null;
+// Helper: Stringify JSON fields for Firestore
+function stringifyJsonFields(data) {
+  const result = { ...data };
+  if (result.capturedBy && typeof result.capturedBy === 'object') {
+    result.capturedBy = JSON.stringify(result.capturedBy);
   }
+  if (result.measurements && typeof result.measurements === 'object') {
+    result.measurements = JSON.stringify(result.measurements);
+  }
+  if (result.delta && typeof result.delta === 'object') {
+    result.delta = JSON.stringify(result.delta);
+  }
+  return result;
+}
 
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      user: this.user,
-      source: this.source,
-      capturedBy: this.capturedByParsed,
-      measurements: this.measurementsParsed,
-      fit: this.fit,
-      version: this.version,
-      previousVersion: this.previousVersion,
-      delta: this.deltaParsed,
-      isActive: this.isActive,
-      queuedForCycle: this.queuedForCycle,
-      notes: this.notes,
-      capturedAt: this.capturedAt,
-      appliedAt: this.appliedAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-    };
+// Helper: Cache management
+async function cacheMeasurement(measurement) {
+  try {
+    const redis = getRedisClient();
+    if (redis && measurement?.id) {
+      await redis.setex(
+        `measurement:${measurement.id}`,
+        CACHE_TTL,
+        JSON.stringify(measurement)
+      );
+    }
+  } catch (error) {
+    // Cache errors are non-fatal
   }
 }
 
-// Measurement Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
+async function getCachedMeasurement(id) {
+  try {
+    const redis = getRedisClient();
+    if (redis) {
+      const cached = await redis.get(`measurement:${id}`);
+      if (cached) return JSON.parse(cached);
+    }
+  } catch (error) {
+    // Cache errors are non-fatal
+  }
+  return null;
+}
+
+async function clearMeasurementCache(id) {
+  try {
+    const redis = getRedisClient();
+    if (redis && id) {
+      await redis.del(`measurement:${id}`);
+    }
+  } catch (error) {
+    // Cache errors are non-fatal
+  }
+}
+
+// Measurement Model
 const MeasurementModel = {
   /**
    * Create a new measurement
    */
   async create(measurementData) {
-    const repo = await getMeasurementRepository();
-
+    const db = getFirestore();
     const now = new Date();
+    const docRef = db.collection(COLLECTION).doc();
 
     // Get the latest version for this user to auto-increment version
     let version = 1;
     let previousVersion = null;
 
     if (measurementData.user) {
-      const latestMeasurement = await repo.search()
-        .where('user').equals(measurementData.user)
-        .sortBy('version', 'DESC')
-        .return.first();
-
-      if (latestMeasurement && latestMeasurement.version) {
-        version = latestMeasurement.version + 1;
-        previousVersion = latestMeasurement.entityId;
+      const query = db.collection(COLLECTION)
+        .where('user', '==', measurementData.user)
+        .orderBy('version', 'desc')
+        .limit(1);
+      
+      const snapshot = await query.get();
+      if (!snapshot.empty) {
+        const latest = snapshot.docs[0].data();
+        version = (latest.version || 0) + 1;
+        previousVersion = snapshot.docs[0].id;
       }
     }
 
-    const measurement = await repo.save({
+    const measurementWithDefaults = stringifyJsonFields({
       user: measurementData.user,
       source: measurementData.source,
-      capturedBy: measurementData.capturedBy ? JSON.stringify(measurementData.capturedBy) : null,
-      measurements: measurementData.measurements ? JSON.stringify(measurementData.measurements) : null,
+      capturedBy: measurementData.capturedBy || null,
+      measurements: measurementData.measurements || null,
       fit: measurementData.fit || 'regular',
       version: measurementData.version || version,
       previousVersion: measurementData.previousVersion || previousVersion,
-      delta: measurementData.delta ? JSON.stringify(measurementData.delta) : null,
+      delta: measurementData.delta || null,
       isActive: measurementData.isActive || false,
-      queuedForCycle: measurementData.queuedForCycle,
-      notes: measurementData.notes,
+      queuedForCycle: measurementData.queuedForCycle || null,
+      notes: measurementData.notes || null,
       capturedAt: measurementData.capturedAt || now,
-      appliedAt: measurementData.appliedAt,
+      appliedAt: measurementData.appliedAt || null,
       createdAt: now,
       updatedAt: now,
     });
 
-    return measurement;
+    await docRef.set(measurementWithDefaults);
+    const created = parseJsonFields({ id: docRef.id, ...measurementWithDefaults });
+    
+    await cacheMeasurement(created);
+    return created;
   },
 
   /**
    * Find measurement by ID
    */
   async findById(id) {
-    const repo = await getMeasurementRepository();
-    const measurement = await repo.fetch(id);
-    if (!measurement || !measurement.user) return null;
+    // Try cache first
+    const cached = await getCachedMeasurement(id);
+    if (cached) return cached;
+
+    const db = getFirestore();
+    const doc = await db.collection(COLLECTION).doc(id).get();
+    
+    if (!doc.exists || !doc.data().user) return null;
+    
+    const measurement = parseJsonFields({ id: doc.id, ...doc.data() });
+    await cacheMeasurement(measurement);
+    
     return measurement;
   },
 
@@ -104,162 +146,222 @@ const MeasurementModel = {
    * Update measurement by ID
    */
   async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getMeasurementRepository();
-    const measurement = await repo.fetch(id);
-    if (!measurement || !measurement.user) return null;
+    const db = getFirestore();
+    const docRef = db.collection(COLLECTION).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists || !doc.data().user) return null;
 
-    // Serialize complex objects
-    const jsonFields = ['capturedBy', 'measurements', 'delta'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
+    const updateWithDefaults = stringifyJsonFields({
+      ...updateData,
+      updatedAt: new Date(),
+    });
 
-    // Update fields
-    Object.assign(measurement, updateData, { updatedAt: new Date() });
-    await repo.save(measurement);
-
-    return options.new !== false ? measurement : null;
+    await docRef.update(updateWithDefaults);
+    
+    const updated = doc.data();
+    const result = parseJsonFields({ id: doc.id, ...updated, ...updateWithDefaults });
+    
+    await clearMeasurementCache(id);
+    await cacheMeasurement(result);
+    
+    return result;
   },
 
   /**
    * Find measurements with filters and pagination
    */
   async find(query = {}, options = {}) {
-    const repo = await getMeasurementRepository();
-    let search = repo.search();
+    const db = getFirestore();
+    let firestoreQuery = db.collection(COLLECTION);
 
     // Apply filters
     if (query.user) {
-      search = search.where('user').equals(query.user);
+      firestoreQuery = firestoreQuery.where('user', '==', query.user);
     }
     if (query.source) {
-      search = search.where('source').equals(query.source);
+      firestoreQuery = firestoreQuery.where('source', '==', query.source);
     }
     if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
+      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
     }
     if (query.queuedForCycle !== undefined) {
-      search = search.where('queuedForCycle').equals(query.queuedForCycle);
+      firestoreQuery = firestoreQuery.where('queuedForCycle', '==', query.queuedForCycle);
     }
 
-    // Apply pagination
+    // Apply sorting and pagination
+    firestoreQuery = firestoreQuery.orderBy('capturedAt', 'desc');
+    
     const page = options.page || 1;
     const limit = options.limit || 20;
     const offset = (page - 1) * limit;
 
-    const measurements = await search
-      .sortBy('capturedAt', 'DESC')
-      .return.page(offset, limit);
+    const countQuery = await firestoreQuery.count().get();
+    const total = countQuery.data().count;
 
-    return measurements;
+    const querySnapshot = await firestoreQuery
+      .offset(offset)
+      .limit(limit)
+      .get();
+
+    const measurements = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })).map(parseJsonFields);
+
+    return {
+      data: measurements,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
   },
 
   /**
    * Count measurements
    */
   async countDocuments(query = {}) {
-    const repo = await getMeasurementRepository();
-    let search = repo.search();
+    const db = getFirestore();
+    let firestoreQuery = db.collection(COLLECTION);
 
     if (query.user) {
-      search = search.where('user').equals(query.user);
+      firestoreQuery = firestoreQuery.where('user', '==', query.user);
     }
     if (query.source) {
-      search = search.where('source').equals(query.source);
+      firestoreQuery = firestoreQuery.where('source', '==', query.source);
     }
     if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
+      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
     }
 
-    return search.return.count();
+    const countQuery = await firestoreQuery.count().get();
+    return countQuery.data().count;
   },
 
   /**
    * Delete measurement (hard delete)
    */
   async delete(id) {
-    const repo = await getMeasurementRepository();
-    await repo.remove(id);
+    const db = getFirestore();
+    await db.collection(COLLECTION).doc(id).delete();
+    await clearMeasurementCache(id);
   },
 
   /**
    * Get active measurement for user
    */
   async getActiveForUser(userId) {
-    const repo = await getMeasurementRepository();
-    return repo.search()
-      .where('user').equals(userId)
-      .where('isActive').equals(true)
-      .return.first();
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('user', '==', userId)
+      .where('isActive', '==', true)
+      .limit(1);
+    
+    const snapshot = await query.get();
+    if (snapshot.empty) return null;
+    
+    const doc = snapshot.docs[0];
+    return parseJsonFields({ id: doc.id, ...doc.data() });
   },
 
   /**
    * Get measurement history for user
    */
   async getHistoryForUser(userId, limit = 10) {
-    const repo = await getMeasurementRepository();
-    return repo.search()
-      .where('user').equals(userId)
-      .sortBy('version', 'DESC')
-      .return.page(0, limit);
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('user', '==', userId)
+      .orderBy('version', 'desc')
+      .limit(limit);
+    
+    const snapshot = await query.get();
+    return snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
   },
 
   /**
    * Get queued measurements for a cycle
    */
   async getQueuedForCycle(cycleNumber) {
-    const repo = await getMeasurementRepository();
-    return repo.search()
-      .where('queuedForCycle').equals(cycleNumber)
-      .where('isActive').equals(false)
-      .return.all();
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('queuedForCycle', '==', cycleNumber)
+      .where('isActive', '==', false);
+    
+    const snapshot = await query.get();
+    return snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
   },
 
   /**
    * Make measurement active
    */
   async makeActive(id) {
-    const repo = await getMeasurementRepository();
-    const measurement = await repo.fetch(id);
-    if (!measurement || !measurement.user) return null;
+    const db = getFirestore();
+    const docRef = db.collection(COLLECTION).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists || !doc.data().user) return null;
+
+    const measurement = doc.data();
+    const userId = measurement.user;
 
     // Deactivate all other measurements for this user
-    const userMeasurements = await repo.search()
-      .where('user').equals(measurement.user)
-      .return.all();
+    const userMeasurements = await db.collection(COLLECTION)
+      .where('user', '==', userId)
+      .get();
 
-    for (const m of userMeasurements) {
-      if (m.entityId !== id && m.isActive) {
-        m.isActive = false;
-        m.updatedAt = new Date();
-        await repo.save(m);
+    const batch = db.batch();
+
+    for (const userDoc of userMeasurements.docs) {
+      if (userDoc.id !== id && userDoc.data().isActive) {
+        batch.update(userDoc.ref, {
+          isActive: false,
+          updatedAt: new Date(),
+        });
+        await clearMeasurementCache(userDoc.id);
       }
     }
 
     // Activate this measurement
-    measurement.isActive = true;
-    measurement.appliedAt = new Date();
-    measurement.updatedAt = new Date();
-    await repo.save(measurement);
+    batch.update(docRef, {
+      isActive: true,
+      appliedAt: new Date(),
+      updatedAt: new Date(),
+    });
 
-    return measurement;
+    await batch.commit();
+
+    const updated = parseJsonFields({ id, ...measurement, isActive: true, appliedAt: new Date(), updatedAt: new Date() });
+    await clearMeasurementCache(id);
+    await cacheMeasurement(updated);
+    
+    return updated;
   },
 
   /**
    * Queue measurement for next cycle
    */
   async queueForNextCycle(id, cycleNumber) {
-    const repo = await getMeasurementRepository();
-    const measurement = await repo.fetch(id);
-    if (!measurement || !measurement.user) return null;
+    const db = getFirestore();
+    const docRef = db.collection(COLLECTION).doc(id);
+    const doc = await docRef.get();
+    
+    if (!doc.exists || !doc.data().user) return null;
 
-    measurement.queuedForCycle = cycleNumber;
-    measurement.updatedAt = new Date();
-    await repo.save(measurement);
+    const updateData = {
+      queuedForCycle: cycleNumber,
+      updatedAt: new Date(),
+    };
 
-    return measurement;
+    await docRef.update(updateData);
+    
+    const updated = parseJsonFields({ id, ...doc.data(), ...updateData });
+    await clearMeasurementCache(id);
+    await cacheMeasurement(updated);
+    
+    return updated;
   },
 };
 

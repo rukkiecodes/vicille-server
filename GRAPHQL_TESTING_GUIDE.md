@@ -253,21 +253,24 @@ query GetPlans {
 
 ```graphql
 mutation Subscribe {
-  createSubscription(
-    input: {
-      planId: "plan-002"
-      paymentMethod: "CARD"
-    }
-  ) {
+  subscribe(planId: "plan-002") {
     id
+    status
+    isActive
+    startDate
     planDetails {
       id
       name
-      price
+      pricing {
+        amount
+        currency
+        billingCycle
+      }
     }
-    status
-    startDate
-    nextBillingDate
+    billing {
+      nextBillingDate
+      lastBillingDate
+    }
   }
 }
 ```
@@ -276,16 +279,24 @@ mutation Subscribe {
 ```json
 {
   "data": {
-    "createSubscription": {
+    "subscribe": {
       "id": "sub-001",
+      "status": "active",
+      "isActive": true,
+      "startDate": "2024-02-14T00:00:00Z",
       "planDetails": {
         "id": "plan-002",
         "name": "PREMIUM",
-        "price": 45000
+        "pricing": {
+          "amount": 45000,
+          "currency": "NGN",
+          "billingCycle": "monthly"
+        }
       },
-      "status": "ACTIVE",
-      "startDate": "2024-02-14T00:00:00Z",
-      "nextBillingDate": "2024-03-14T00:00:00Z"
+      "billing": {
+        "nextBillingDate": "2024-03-14T00:00:00Z",
+        "lastBillingDate": null
+      }
     }
   }
 }

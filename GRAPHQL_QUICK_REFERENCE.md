@@ -258,21 +258,24 @@ query {
 **Subscribe to a plan**
 
 ```graphql
-mutation {
-  createSubscription(
-    input: {
-      planId: "plan-uuid-123"
-      paymentMethod: "CARD"
-    }
-  ) {
+mutation Subscribe {
+  subscribe(planId: "plan-uuid-123") {
     id
-    planDetails {
-      name
-      price
-    }
     status
     startDate
-    nextBillingDate
+    isActive
+    planDetails {
+      name
+      pricing {
+        amount
+        currency
+        billingCycle
+      }
+    }
+    billing {
+      nextBillingDate
+      lastBillingDate
+    }
   }
 }
 ```
