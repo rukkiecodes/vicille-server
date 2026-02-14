@@ -373,6 +373,49 @@ emailService.sendEmail(email, subject, htmlContent, textContent);
 }
 ```
 
+### SubscriptionPlan Model (Firestore)
+```javascript
+{
+  id: UUID,
+  name: string,                              // 'Starter', 'Premium', 'Elite'
+  slug: string,                              // 'starter', 'premium', 'elite'
+  description: string,
+  pricing: {
+    amount: number,                          // e.g., 9999 (Naira * 100)
+    currency: string,                        // 'NGN'
+    billingCycle: 'monthly' | 'quarterly' | 'annual',
+    trialDays: number
+  },
+  features: {
+    itemsPerCycle: number,                   // 4, 8, 12 items
+    fabricOptions: boolean,
+    styleConsultation: boolean,
+    prioritySupport: boolean,
+    expressDelivery: boolean,
+    customDesigns: number,
+    returnExchanges: boolean,
+    accessoriesIncluded: boolean,
+    seasonalCollections: boolean
+  },
+  stylingWindow: {
+    daysBeforeProduction: number,            // Days customer has to decide
+    reminderDays: number                     // Reminder before production
+  },
+  displayOrder: number,                      // Sort order in UI
+  isActive: boolean,
+  highlights: Array<string>,
+  bestFor: string,
+  createdAt: Date,
+  updatedAt: Date
+}
+```
+
+**Caching Strategy:**
+- Redis cache: 1-hour TTL (shorter than user sessions since plans rarely change)
+- Cache keys: `subscriptionPlan:{id}`
+- Invalidation: Automatic on update, manual clear on delete
+- Fallback: Query Firestore if cache miss
+
 ---
 
 ## 🔒 Security Features

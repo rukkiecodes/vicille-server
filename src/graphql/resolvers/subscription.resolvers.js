@@ -49,8 +49,8 @@ const subscriptionResolvers = {
       if (activeOnly) {
         query.isActive = true;
       }
-      const plans = await SubscriptionPlanModel.find(query);
-      return entitiesToJSON(plans);
+      const result = await SubscriptionPlanModel.find(query);
+      return entitiesToJSON(result.data);
     },
 
     subscription: async (_, { id }, context) => {

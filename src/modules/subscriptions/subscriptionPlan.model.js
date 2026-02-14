@@ -1,200 +1,286 @@
+import { getFirestore } from '../../infrastructure/database/firebase.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
 
-// SubscriptionPlan Entity class
-class Model {
-  // Get parsed pricing object
-  get pricingParsed() {
-    return this.pricing ? JSON.parse(this.pricing) : null;
-  }
+const COLLECTION = 'subscriptionPlans';
+const CACHE_TTL = 3600; // 1 hour
 
-  // Get parsed features object
-  get featuresParsed() {
-    return this.features ? JSON.parse(this.features) : null;
-  }
+// Helper to parse JSON fields
+const parseJsonFields = (plan) => {
+  if (!plan) return null;
+  return {
+    ...plan,
+    pricing: plan.pricing && typeof plan.pricing === 'string' ? JSON.parse(plan.pricing) : plan.pricing || null,
+    features: plan.features && typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features || null,
+    stylingWindow: plan.stylingWindow && typeof plan.stylingWindow === 'string' 
+      ? JSON.parse(plan.stylingWindow) 
+      : plan.stylingWindow || {
+          daysBeforeProduction: 7,
+          reminderDays: [7, 3, 1],
+        },
+  };
+};
 
-  // Get parsed styling window object
-  get stylingWindowParsed() {
-    return this.stylingWindow ? JSON.parse(this.stylingWindow) : {
-      daysBeforeProduction: 7,
-      reminderDays: [7, 3, 1],
-    };
+// Helper to stringify JSON fields for storage
+const stringifyJsonFields = (data) => {
+  const cleaned = { ...data };
+  if (cleaned.pricing && typeof cleaned.pricing === 'object') {
+    cleaned.pricing = JSON.stringify(cleaned.pricing);
   }
-
-  // Virtual for formatted price
-  get formattedPrice() {
-    const pricing = this.pricingParsed;
-    if (!pricing) return null;
-    const amount = pricing.amount / 100; // Convert from kobo
-    return `₦${amount.toLocaleString()}/${pricing.billingCycle}`;
+  if (cleaned.features && typeof cleaned.features === 'object') {
+    cleaned.features = JSON.stringify(cleaned.features);
   }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      name: this.name,
-      slug: this.slug,
-      description: this.description,
-      pricing: this.pricingParsed,
-      features: this.featuresParsed,
-      stylingWindow: this.stylingWindowParsed,
-      isActive: this.isActive,
-      displayOrder: this.displayOrder,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      formattedPrice: this.formattedPrice,
-    };
+  if (cleaned.stylingWindow && typeof cleaned.stylingWindow === 'object') {
+    cleaned.stylingWindow = JSON.stringify(cleaned.stylingWindow);
   }
-}
+  return cleaned;
+};
 
-// SubscriptionPlan Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
+// Helper to cache plan in Redis
+const cachePlan = async (id, plan) => {
+  try {
+    const redis = getRedisClient();
+    await redis.setex(`subscriptionPlan:${id}`, CACHE_TTL, JSON.stringify(plan));
+  } catch (err) {
+    // Redis errors are non-fatal for caching
+    console.error('Cache error for plan:', err.message);
+  }
+};
+
+// Helper to get cached plan
+const getCachedPlan = async (id) => {
+  try {
+    const redis = getRedisClient();
+    const cached = await redis.get(`subscriptionPlan:${id}`);
+    return cached ? JSON.parse(cached) : null;
+  } catch (err) {
+    return null;
+  }
+};
+
+// Helper to clear plan cache
+const clearPlanCache = async (id) => {
+  try {
+    const redis = getRedisClient();
+    await redis.del(`subscriptionPlan:${id}`);
+  } catch (err) {
+    console.error('Cache clear error:', err.message);
+  }
+};
+
 const SubscriptionPlanModel = {
   /**
    * Create a new subscription plan
    */
   async create(planData) {
-    const repo = await getSubscriptionPlanRepository();
-
+    const db = getFirestore();
     const now = new Date();
 
-    const plan = await repo.save({
+    const docData = {
       name: planData.name,
-      slug: planData.slug?.toLowerCase(),
-      description: planData.description,
-      pricing: planData.pricing ? JSON.stringify(planData.pricing) : null,
-      features: planData.features ? JSON.stringify(planData.features) : null,
-      stylingWindow: planData.stylingWindow ? JSON.stringify(planData.stylingWindow) : JSON.stringify({
+      slug: planData.slug?.toLowerCase() || '',
+      description: planData.description || '',
+      pricing: planData.pricing || null,
+      features: planData.features || null,
+      stylingWindow: planData.stylingWindow || {
         daysBeforeProduction: 7,
         reminderDays: [7, 3, 1],
-      }),
+      },
       isActive: planData.isActive !== false,
       displayOrder: planData.displayOrder || 0,
       createdAt: now,
       updatedAt: now,
-    });
+    };
 
-    return plan;
+    // Store complex objects normally (Firestore handles nested objects)
+    const docRef = await db.collection(COLLECTION).add(docData);
+    
+    const plan = {
+      id: docRef.id,
+      ...docData,
+    };
+
+    await cachePlan(plan.id, parseJsonFields(plan));
+    return parseJsonFields(plan);
   },
 
   /**
    * Find subscription plan by ID
    */
   async findById(id) {
-    const repo = await getSubscriptionPlanRepository();
-    const plan = await repo.fetch(id);
-    if (!plan || !plan.name) return null;
-    return plan;
+    // Try cache first
+    let plan = await getCachedPlan(id);
+    if (plan) return plan;
+
+    const db = getFirestore();
+    const docSnapshot = await db.collection(COLLECTION).doc(id).get();
+    
+    if (!docSnapshot.exists) return null;
+    
+    const plan_data = {
+      id: docSnapshot.id,
+      ...docSnapshot.data(),
+    };
+
+    const parsed = parseJsonFields(plan_data);
+    await cachePlan(id, parsed);
+    return parsed;
   },
 
   /**
    * Find subscription plan by slug
    */
   async findBySlug(slug) {
-    const repo = await getSubscriptionPlanRepository();
-    const plan = await repo.search()
-      .where('slug').equals(slug.toLowerCase())
-      .where('isActive').equals(true)
-      .return.first();
-    return plan;
+    const db = getFirestore();
+    const query = db.collection(COLLECTION)
+      .where('slug', '==', slug.toLowerCase())
+      .where('isActive', '==', true);
+    
+    const querySnapshot = await query.limit(1).get();
+    
+    if (querySnapshot.empty) return null;
+    
+    const doc = querySnapshot.docs[0];
+    const plan = {
+      id: doc.id,
+      ...doc.data(),
+    };
+
+    return parseJsonFields(plan);
   },
 
   /**
    * Update subscription plan by ID
    */
   async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getSubscriptionPlanRepository();
-    const plan = await repo.fetch(id);
-    if (!plan || !plan.name) return null;
+    const db = getFirestore();
+    
+    // Check if plan exists
+    const docSnapshot = await db.collection(COLLECTION).doc(id).get();
+    if (!docSnapshot.exists) return null;
 
-    // Serialize complex objects
-    const jsonFields = ['pricing', 'features', 'stylingWindow'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
+    // Prepare update data
+    const dataToUpdate = {
+      ...updateData,
+      updatedAt: new Date(),
+    };
 
     // Ensure slug is lowercase
-    if (updateData.slug) {
-      updateData.slug = updateData.slug.toLowerCase();
+    if (dataToUpdate.slug) {
+      dataToUpdate.slug = dataToUpdate.slug.toLowerCase();
     }
 
-    // Update fields
-    Object.assign(plan, updateData, { updatedAt: new Date() });
-    await repo.save(plan);
+    // Update in Firestore
+    await db.collection(COLLECTION).doc(id).update(dataToUpdate);
 
-    return options.new !== false ? plan : null;
+    // Clear cache
+    await clearPlanCache(id);
+
+    // Return updated document if requested
+    if (options.new !== false) {
+      return this.findById(id);
+    }
+
+    return null;
   },
 
   /**
    * Find subscription plans with filters and pagination
    */
   async find(query = {}, options = {}) {
-    const repo = await getSubscriptionPlanRepository();
-    let search = repo.search();
+    const db = getFirestore();
+    let firestoreQuery = db.collection(COLLECTION);
 
     // Apply filters
     if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
+      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
     }
+
+    // Sort by display order
+    firestoreQuery = firestoreQuery.orderBy('displayOrder', 'asc')
+      .orderBy('createdAt', 'desc');
 
     // Apply pagination
     const page = options.page || 1;
     const limit = options.limit || 20;
     const offset = (page - 1) * limit;
 
-    const plans = await search
-      .sortBy('displayOrder', 'ASC')
-      .return.page(offset, limit);
+    // Get total count
+    const countQuery = await firestoreQuery.count().get();
+    const total = countQuery.data().count;
 
-    return plans;
+    // Get paginated results
+    const querySnapshot = await firestoreQuery
+      .offset(offset)
+      .limit(limit)
+      .get();
+
+    const plans = querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })).map(parseJsonFields);
+
+    return {
+      data: plans,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    };
   },
 
   /**
    * Count subscription plans
    */
   async countDocuments(query = {}) {
-    const repo = await getSubscriptionPlanRepository();
-    let search = repo.search();
+    const db = getFirestore();
+    let firestoreQuery = db.collection(COLLECTION);
 
     if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
+      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
     }
 
-    return search.return.count();
+    const countQuery = await firestoreQuery.count().get();
+    return countQuery.data().count;
   },
 
   /**
    * Delete subscription plan (hard delete)
    */
   async delete(id) {
-    const repo = await getSubscriptionPlanRepository();
-    await repo.remove(id);
+    const db = getFirestore();
+    await clearPlanCache(id);
+    await db.collection(COLLECTION).doc(id).delete();
   },
 
   /**
    * Find active plans sorted by display order
    */
   async findActive() {
-    const repo = await getSubscriptionPlanRepository();
-    return repo.search()
-      .where('isActive').equals(true)
-      .sortBy('displayOrder', 'ASC')
-      .return.all();
+    const db = getFirestore();
+    const querySnapshot = await db.collection(COLLECTION)
+      .where('isActive', '==', true)
+      .orderBy('displayOrder', 'asc')
+      .get();
+
+    return querySnapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    })).map(parseJsonFields);
   },
 
   /**
    * Check if slug exists
    */
   async slugExists(slug) {
-    const repo = await getSubscriptionPlanRepository();
-    const plan = await repo.search()
-      .where('slug').equals(slug.toLowerCase())
-      .return.first();
-    return !!plan;
+    const db = getFirestore();
+    const querySnapshot = await db.collection(COLLECTION)
+      .where('slug', '==', slug.toLowerCase())
+      .limit(1)
+      .get();
+
+    return !querySnapshot.empty;
   },
 };
 

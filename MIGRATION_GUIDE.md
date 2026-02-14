@@ -174,6 +174,36 @@ await UserModel.findByIdAndUpdate(userId, {
 await UserModel.clearCachedUser(userId);
 ```
 
+### 6. Subscription Plan Model
+**File**: `src/modules/subscriptions/subscriptionPlan.model.js`
+
+**Changes:**
+- Implemented Firestore CRUD operations
+- Added Redis caching layer (1 hour TTL)
+- JSON field handling for pricing and features
+- Full pagination support
+
+**Methods Implemented:**
+```javascript
+async create(planData)
+async findById(id)
+async findBySlug(slug)
+async findByIdAndUpdate(id, updateData, options)
+async find(query, options)            // With pagination support
+async countDocuments(query)
+async delete(id)
+async findActive()
+async slugExists(slug)
+```
+
+**Caching Strategy:**
+- Plans cached in Redis with 1-hour TTL
+- Cache keys: `subscriptionPlan:{id}`
+- Cache invalidated on updates and deletions
+- Firestore fallback on cache miss
+
+✅ **Status**: Complete - Fully integrated with Firestore
+
 ---
 
 ## 📝 Other Models Not Yet Migrated
@@ -358,9 +388,9 @@ Solution: Check Gmail app password is correct (not regular password)
 
 ## 📚 Next Steps
 
-1. **Migrate remaining 23 models** to Firestore
+1. **Migrate remaining 22 models** to Firestore (Priority: Order, Payment, Tailor, Measurement)
 2. **Add Firestore security rules** for production
-3. **Implement real-time listeners** for notifications
+3. **Implement real-time listeners** for notifications and order updates
 4. **Set up automatic backups** and disaster recovery
 5. **Add data analytics** using Firestore insights
 6. **Optimize queries** based on production usage patterns
@@ -377,5 +407,5 @@ For migration questions:
 ---
 
 **Migration Completed**: February 14, 2026  
-**Migration Status**: ✅ User Model Complete (Others Pending)  
+**Migration Status**: ✅ User & SubscriptionPlan Models Complete (22 Others Pending)  
 **Server Status**: ✅ Running at Port 5000
