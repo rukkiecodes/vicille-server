@@ -1,67 +1,48 @@
 import bcrypt from 'bcryptjs';
+import { v4 as uuidv4 } from 'uuid';
+import { getFirestore } from '../../infrastructure/database/firebase.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
-import { hashActivationCode, compareActivationCode } from '../../core/utils/crypto.js';
+import logger from '../../core/logger/index.js';
+
+const COLLECTION = 'users';
+const REDIS_SESSION_PREFIX = 'session:user:';
+const SESSION_TTL = 86400 * 7; // 7 days in seconds
 
 /**
- * User Model - Redis-based persistence
+ * User Model - Firestore with Redis session caching
  */
 const UserModel = {
-  prefix: 'user:',
-  indexPrefix: 'user:index:',
-
-  /**
-   * Get fully qualified key for user
-   */
-  getKey(id) {
-    return `${this.prefix}${id}`;
-  },
-
-  /**
-   * Get index key
-   */
-  getIndexKey(field, value) {
-    return `${this.indexPrefix}${field}:${value}`;
-  },
-
   /**
    * Create a new user
    */
   async create(userData) {
-    const client = getRedisClient();
-    const { v4: uuidv4 } = await import('uuid');
+    const db = getFirestore();
     const userId = uuidv4();
-    const key = this.getKey(userId);
+    const now = new Date();
 
-    // Hash activation code if provided
-    let activationCode = userData.activationCode;
-    if (activationCode) {
-      activationCode = await hashActivationCode(activationCode);
-    }
-
-    const now = new Date().toISOString();
     const user = {
       id: userId,
       fullName: userData.fullName,
       email: userData.email?.toLowerCase(),
       phone: userData.phone,
       passwordHash: userData.passwordHash || null,
-      activationCode: activationCode || null,
+      activationCode: userData.activationCode || null, // Plain code for email
       isActivated: userData.isActivated || false,
       activatedAt: userData.activatedAt || null,
       dateOfBirth: userData.dateOfBirth || null,
       gender: userData.gender || null,
-      height: userData.height ? JSON.stringify(userData.height) : null,
-      preferences: userData.preferences ? JSON.stringify(userData.preferences) : null,
-      profilePhoto: userData.profilePhoto ? JSON.stringify(userData.profilePhoto) : null,
-      deliveryDetails: userData.deliveryDetails ? JSON.stringify(userData.deliveryDetails) : null,
-      paymentMethods: userData.paymentMethods ? JSON.stringify(userData.paymentMethods) : '[]',
+      height: userData.height || null,
+      preferences: userData.preferences || null,
+      profilePhoto: userData.profilePhoto || null,
+      deliveryDetails: userData.deliveryDetails || null,
+      paymentMethods: userData.paymentMethods || [],
       subscriptionStatus: userData.subscriptionStatus || 'inactive',
       currentSubscription: userData.currentSubscription || null,
       accountStatus: userData.accountStatus || 'pending',
       suspensionReason: userData.suspensionReason || null,
       onboardingCompleted: userData.onboardingCompleted || false,
       onboardingStep: userData.onboardingStep || 0,
-      onboardingData: userData.onboardingData ? JSON.stringify(userData.onboardingData) : null,
+      onboardingData: userData.onboardingData || null,
       birthdayPackageEligible: userData.birthdayPackageEligible || false,
       lastBirthdayPackage: userData.lastBirthdayPackage || null,
       lastLoginAt: userData.lastLoginAt || null,
@@ -75,288 +56,191 @@ const UserModel = {
       updatedAt: now,
     };
 
-    // Store user
-    await client.set(key, JSON.stringify(user));
-
-    // Create indexes
-    if (user.email) {
-      await client.set(this.getIndexKey('email', user.email), userId);
+    try {
+      await db.collection(COLLECTION).doc(userId).set(user);
+      logger.info(`User created: ${user.email} (${userId})`);
+      return this.formatUser(user);
+    } catch (error) {
+      logger.error('Error creating user:', error);
+      throw error;
     }
-    if (user.phone) {
-      await client.set(this.getIndexKey('phone', user.phone), userId);
-    }
-
-    return this.formatUser(user);
   },
+
 
   /**
    * Find user by ID
    */
   async findById(id) {
-    const client = getRedisClient();
-    const key = this.getKey(id);
-    const data = await client.get(key);
+    const db = getFirestore();
 
-    if (!data) {
-      return null;
+    try {
+      const doc = await db.collection(COLLECTION).doc(id).get();
+      if (!doc.exists) return null;
+      return this.formatUser(doc.data());
+    } catch (error) {
+      logger.error('Error finding user by ID:', error);
+      throw error;
     }
-
-    const user = JSON.parse(data);
-    if (user.isDeleted) {
-      return null;
-    }
-
-    return this.formatUser(user);
   },
 
   /**
    * Find user by email
    */
   async findByEmail(email) {
-    const client = getRedisClient();
-    const indexKey = this.getIndexKey('email', email.toLowerCase());
-    const userId = await client.get(indexKey);
+    const db = getFirestore();
 
-    if (!userId) {
-      return null;
+    try {
+      const snapshot = await db
+        .collection(COLLECTION)
+        .where('email', '==', email.toLowerCase())
+        .limit(1)
+        .get();
+
+      if (snapshot.empty) return null;
+      return this.formatUser(snapshot.docs[0].data());
+    } catch (error) {
+      logger.error('Error finding user by email:', error);
+      throw error;
     }
-
-    return this.findById(userId);
   },
 
   /**
    * Find user by phone
    */
   async findByPhone(phone) {
-    const client = getRedisClient();
-    const indexKey = this.getIndexKey('phone', phone);
-    const userId = await client.get(indexKey);
+    const db = getFirestore();
 
-    if (!userId) {
-      return null;
+    try {
+      const snapshot = await db
+        .collection(COLLECTION)
+        .where('phone', '==', phone)
+        .limit(1)
+        .get();
+
+      if (snapshot.empty) return null;
+      return this.formatUser(snapshot.docs[0].data());
+    } catch (error) {
+      logger.error('Error finding user by phone:', error);
+      throw error;
     }
-
-    return this.findById(userId);
   },
 
   /**
    * Update user
    */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const client = getRedisClient();
-    const key = this.getKey(id);
-    const data = await client.get(key);
+  async findByIdAndUpdate(id, updates) {
+    const db = getFirestore();
 
-    if (!data) {
-      return null;
+    try {
+      const updateData = {
+        ...updates,
+        updatedAt: new Date(),
+      };
+
+      await db.collection(COLLECTION).doc(id).update(updateData);
+      return this.findById(id);
+    } catch (error) {
+      logger.error('Error updating user:', error);
+      throw error;
     }
-
-    const user = JSON.parse(data);
-
-    if (user.isDeleted && !options.includeDeleted) {
-      return null;
-    }
-
-    // Hash activation code if provided
-    if (updateData.activationCode) {
-      updateData.activationCode = await hashActivationCode(updateData.activationCode);
-    }
-
-    // Serialize complex objects
-    const jsonFields = ['height', 'preferences', 'profilePhoto', 'deliveryDetails', 'paymentMethods', 'onboardingData'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
-
-    // Update user
-    const updated = {
-      ...user,
-      ...updateData,
-      id: user.id,
-      createdAt: user.createdAt,
-      updatedAt: new Date().toISOString(),
-    };
-
-    // Handle email index change
-    if (updateData.email && updateData.email.toLowerCase() !== user.email) {
-      if (user.email) {
-        await client.del(this.getIndexKey('email', user.email));
-      }
-      await client.set(this.getIndexKey('email', updateData.email.toLowerCase()), id);
-    }
-
-    // Store updated user
-    await client.set(key, JSON.stringify(updated));
-
-    return options.new !== false ? this.formatUser(updated) : null;
   },
 
   /**
-   * Soft delete user
+   * Delete user (soft delete)
    */
-  async findByIdAndDelete(id) {
-    const client = getRedisClient();
-    const user = await this.findById(id);
+  async delete(id) {
+    const db = getFirestore();
 
-    if (!user) {
-      return null;
-    }
-
-    const key = this.getKey(id);
-    const updated = {
-      ...user,
-      isDeleted: true,
-      deletedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await client.set(key, JSON.stringify(updated));
-    return updated;
-  },
-
-  /**
-   * Hard delete user
-   */
-  async hardDelete(id) {
-    const client = getRedisClient();
-    const user = await this.findById(id);
-
-    if (!user) {
-      return false;
-    }
-
-    // Delete indexes
-    if (user.email) {
-      await client.del(this.getIndexKey('email', user.email));
-    }
-    if (user.phone) {
-      await client.del(this.getIndexKey('phone', user.phone));
-    }
-
-    // Delete user
-    const key = this.getKey(id);
-    const result = await client.del(key);
-    return result > 0;
-  },
-
-  /**
-   * Find all users (with pagination)
-   */
-  async find(query = {}, options = {}) {
-    const client = getRedisClient();
-    const pattern = `${this.prefix}*`;
-    let cursor = '0';
-    const users = [];
-
-    do {
-      const result = await client.scan(cursor, {
-        MATCH: pattern,
-        COUNT: options.limit || 100,
+    try {
+      await db.collection(COLLECTION).doc(id).update({
+        isDeleted: true,
+        deletedAt: new Date(),
       });
+      logger.info(`User soft-deleted: ${id}`);
+      return true;
+    } catch (error) {
+      logger.error('Error deleting user:', error);
+      throw error;
+    }
+  },
 
-      for (const key of result.keys) {
-        const data = await client.get(key);
-        if (data) {
-          const user = JSON.parse(data);
+  /**
+   * Find all users with pagination
+   */
+  async find(filters = {}, pagination = {}) {
+    const db = getFirestore();
+    const { limit = 20, offset = 0 } = pagination;
 
-          // Apply filters
-          if (query.includeDeleted !== true && user.isDeleted) continue;
-          if (query.accountStatus && user.accountStatus !== query.accountStatus) continue;
-          if (query.subscriptionStatus && user.subscriptionStatus !== query.subscriptionStatus) continue;
-          if (query.isActivated !== undefined && user.isActivated !== query.isActivated) continue;
-          if (query.onboardingCompleted !== undefined && user.onboardingCompleted !== query.onboardingCompleted) continue;
+    try {
+      let query = db.collection(COLLECTION).where('isDeleted', '==', false);
 
-          users.push(this.formatUser(user));
-        }
+      // Add filters
+      if (filters.accountStatus) {
+        query = query.where('accountStatus', '==', filters.accountStatus);
+      }
+      if (filters.subscriptionStatus) {
+        query = query.where('subscriptionStatus', '==', filters.subscriptionStatus);
       }
 
-      cursor = result.cursor;
-    } while (cursor !== '0' && users.length < (options.limit || 100));
-
-    return users.slice(0, options.limit || 100);
+      const snapshot = await query.limit(limit + 1).offset(offset).get();
+      const users = snapshot.docs.map(doc => this.formatUser(doc.data()));
+      
+      return {
+        users,
+        hasMore: snapshot.docs.length > limit,
+      };
+    } catch (error) {
+      logger.error('Error finding users:', error);
+      throw error;
+    }
   },
 
   /**
    * Count users
    */
-  async countDocuments(query = {}) {
-    const client = getRedisClient();
-    const pattern = `${this.prefix}*`;
-    let cursor = '0';
-    let count = 0;
+  async countDocuments(filters = {}) {
+    const db = getFirestore();
 
-    do {
-      const result = await client.scan(cursor, {
-        MATCH: pattern,
-        COUNT: 100,
-      });
+    try {
+      let query = db.collection(COLLECTION).where('isDeleted', '==', false);
 
-      for (const key of result.keys) {
-        const data = await client.get(key);
-        if (data) {
-          const user = JSON.parse(data);
-
-          if (query.includeDeleted !== true && user.isDeleted) continue;
-          if (query.accountStatus && user.accountStatus !== query.accountStatus) continue;
-          if (query.subscriptionStatus && user.subscriptionStatus !== query.subscriptionStatus) continue;
-
-          count++;
-        }
+      if (filters.accountStatus) {
+        query = query.where('accountStatus', '==', filters.accountStatus);
       }
 
-      cursor = result.cursor;
-    } while (cursor !== '0');
-
-    return count;
+      const snapshot = await query.count().get();
+      return snapshot.data().count;
+    } catch (error) {
+      logger.error('Error counting users:', error);
+      throw error;
+    }
   },
 
   /**
-   * Compare activation code
+   * Compare activation code (plain string comparison)
    */
   async compareActivationCode(user, code) {
     if (!user.activationCode) return false;
-    return compareActivationCode(code, user.activationCode);
+    return user.activationCode === code;
   },
 
   /**
    * Increment failed login attempts
    */
   async incrementFailedAttempts(user) {
-    const client = getRedisClient();
-    const key = this.getKey(user.id);
-    const updated = {
-      ...user,
+    return this.findByIdAndUpdate(user.id, {
       failedLoginAttempts: (user.failedLoginAttempts || 0) + 1,
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (updated.failedLoginAttempts >= 5) {
-      updated.lockedUntil = new Date(Date.now() + 15 * 60 * 1000).toISOString(); // Lock for 15 minutes
-    }
-
-    await client.set(key, JSON.stringify(updated));
-    return this.formatUser(updated);
+    });
   },
 
   /**
    * Reset failed login attempts
    */
   async resetFailedAttempts(user) {
-    const client = getRedisClient();
-    const key = this.getKey(user.id);
-    const updated = {
-      ...user,
+    return this.findByIdAndUpdate(user.id, {
       failedLoginAttempts: 0,
       lockedUntil: null,
-      lastLoginAt: new Date().toISOString(),
-      loginCount: (user.loginCount || 0) + 1,
-      updatedAt: new Date().toISOString(),
-    };
-
-    await client.set(key, JSON.stringify(updated));
-    return this.formatUser(updated);
+    });
   },
 
   /**
@@ -376,19 +260,74 @@ const UserModel = {
   },
 
   /**
+   * Cache authenticated user in Redis
+   */
+  async cacheAuthenticatedUser(user) {
+    try {
+      const redis = getRedisClient();
+      const key = `${REDIS_SESSION_PREFIX}${user.id}`;
+      await redis.set(key, JSON.stringify(user), 'EX', SESSION_TTL);
+      logger.info(`User cached in Redis: ${user.email}`);
+    } catch (error) {
+      logger.error('Error caching user in Redis:', error);
+      // Don't throw - caching failure shouldn't break authentication
+    }
+  },
+
+  /**
+   * Get cached user from Redis
+   */
+  async getCachedUser(userId) {
+    try {
+      const redis = getRedisClient();
+      const key = `${REDIS_SESSION_PREFIX}${userId}`;
+      const cached = await redis.get(key);
+      if (cached) {
+        return JSON.parse(cached);
+      }
+      return null;
+    } catch (error) {
+      logger.error('Error getting cached user:', error);
+      return null;
+    }
+  },
+
+  /**
+   * Clear cached user from Redis
+   */
+  async clearCachedUser(userId) {
+    try {
+      const redis = getRedisClient();
+      const key = `${REDIS_SESSION_PREFIX}${userId}`;
+      await redis.del(key);
+      logger.info(`Cached user cleared: ${userId}`);
+    } catch (error) {
+      logger.error('Error clearing cached user:', error);
+    }
+  },
+
+  /**
    * Format user for response
    */
   formatUser(user) {
     return {
       ...user,
-      heightParsed: user.height ? JSON.parse(user.height) : null,
-      preferencesParsed: user.preferences ? JSON.parse(user.preferences) : null,
-      profilePhotoParsed: user.profilePhoto ? JSON.parse(user.profilePhoto) : null,
-      deliveryDetailsParsed: user.deliveryDetails ? JSON.parse(user.deliveryDetails) : null,
-      paymentMethodsParsed: user.paymentMethods ? JSON.parse(user.paymentMethods) : [],
+      entityId: user.id, // For backward compatibility
       age: this.calculateAge(user.dateOfBirth),
-      isLocked: user.lockedUntil && new Date(user.lockedUntil) > new Date(),
+      toSafeJSON: () => this.toSafeJSON(user),
     };
+  },
+
+  /**
+   * Return user data without sensitive fields
+   */
+  toSafeJSON(user) {
+    const safeUser = { ...user };
+    delete safeUser.passwordHash;
+    delete safeUser.activationCode;
+    delete safeUser.failedLoginAttempts;
+    delete safeUser.lockedUntil;
+    return safeUser;
   },
 
   /**

@@ -20,14 +20,20 @@
 ### Accessing Apollo Sandbox
 Open your browser and navigate to:
 ```
-http://localhost:4000/graphql
+http://localhost:5000/graphql
 ```
 
 ### API Endpoint
 ```
-POST http://localhost:4000/graphql
+POST http://localhost:5000/graphql
 Content-Type: application/json
 ```
+
+### Database Architecture
+- **Primary Database**: Firebase Firestore
+- **Cache Layer**: Redis (for authenticated user sessions)
+- **File Storage**: Cloudinary
+- **Email Service**: NodeMailer (SMTP)
 
 ### Headers
 For authenticated requests, include:

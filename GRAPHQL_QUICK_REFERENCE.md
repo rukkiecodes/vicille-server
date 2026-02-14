@@ -2,8 +2,14 @@
 
 ## 🚀 API Endpoint
 ```
-http://localhost:4000/graphql
+http://localhost:5000/graphql
 ```
+
+## 🏗️ Architecture
+- **Primary Database**: Firebase Firestore
+- **Cache Layer**: Redis (authenticated sessions)
+- **File Storage**: Cloudinary
+- **Email**: NodeMailer (SMTP)
 
 ---
 

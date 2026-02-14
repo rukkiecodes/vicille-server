@@ -2,6 +2,7 @@ import { createServer } from 'http';
 import app from './app.js';
 import config, { validateConfig } from './config/index.js';
 import { connectRedis, disconnectRedis } from './infrastructure/database/redis.js';
+import { initializeFirebase, disconnectFirebase } from './infrastructure/database/firebase.js';
 import logger from './core/logger/index.js';
 import { setupGraphQL } from './graphql/index.js';
 // import { initializeSocket } from './sockets/index.js';
@@ -30,6 +31,10 @@ const gracefulShutdown = async (signal) => {
       await disconnectRedis();
       logger.info('Redis connection closed');
 
+      // Disconnect from Firebase
+      await disconnectFirebase();
+      logger.info('Firebase connection closed');
+
       process.exit(0);
     } catch (error) {
       logger.error('Error during shutdown:', error);
@@ -47,6 +52,9 @@ const gracefulShutdown = async (signal) => {
 // Start server
 const startServer = async () => {
   try {
+    // Initialize Firebase
+    initializeFirebase();
+
     // Connect to Redis
     await connectRedis();
     logger.info('Connected to Redis successfully');
@@ -65,7 +73,8 @@ const startServer = async () => {
 ========================================
   Environment: ${config.env}
   Port: ${config.server.port}
-  Database: Redis
+  Database: Firestore (Primary)
+  Cache: Redis
   GraphQL: http://${config.server.host}:${config.server.port}/graphql
   Health: http://${config.server.host}:${config.server.port}/health
 ========================================

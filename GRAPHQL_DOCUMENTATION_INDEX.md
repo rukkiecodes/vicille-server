@@ -129,6 +129,15 @@ Contains:
 
 ## 🔍 Feature-Based Guide
 
+### Infrastructure Setup
+- **Database**: Firebase Firestore (primary storage)
+- **Cache**: Redis (authenticated user sessions - 7-day TTL)
+- **Files**: Cloudinary (all images and documents)
+- **Email**: NodeMailer (SMTP via Gmail)
+- **Port**: 5000
+
+### Architecture Overview
+
 ### Authentication
 - **Quick Start:** [GRAPHQL_QUICK_REFERENCE.md](GRAPHQL_QUICK_REFERENCE.md) - Steps 1-3
 - **Testing:** [GRAPHQL_TESTING_GUIDE.md](GRAPHQL_TESTING_GUIDE.md) - Scenario 1

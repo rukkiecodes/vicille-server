@@ -4,6 +4,7 @@ import TailorModel from '../../modules/tailors/tailor.model.js';
 import AdminModel from '../../modules/admin/admin.model.js';
 import { generateAccessToken, generateRefreshToken, verifyRefreshToken } from '../../middlewares/auth.middleware.js';
 import { generateActivationCode } from '../../core/utils/randomCode.js';
+import emailService from '../../services/email.service.js';
 import logger from '../../core/logger/index.js';
 
 const authResolvers = {
@@ -34,8 +35,18 @@ const authResolvers = {
           logger.info(`Activation code regenerated for: ${email}, code: ${code}`);
         }
 
-        // In production, send email with code
-        // For dev, code is logged above
+        // Send activation code email
+        try {
+          const updatedUser = await UserModel.findByEmail(email);
+          await emailService.sendActivationCodeEmail(
+            email,
+            fullName || updatedUser.fullName,
+            updatedUser.activationCode
+          );
+        } catch (emailError) {
+          logger.error('Failed to send activation email, but code was generated:', emailError);
+          // Don't throw error - code was generated, email might fail but user can still proceed
+        }
 
         return {
           success: true,

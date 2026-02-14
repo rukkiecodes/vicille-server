@@ -2,6 +2,13 @@
 
 ## 📑 All Available Queries & Mutations by Module
 
+### 🏗️ Current Infrastructure
+- **API Endpoint**: `http://localhost:5000/graphql`
+- **Primary Database**: Firebase Firestore
+- **Session Cache**: Redis
+- **File Storage**: Cloudinary
+- **Email Service**: NodeMailer (SMTP)
+
 ---
 
 ## 🔐 AUTHENTICATION MODULE

@@ -2,7 +2,7 @@
 
 ## 🧪 Testing in Apollo Sandbox
 
-1. Open: `http://localhost:4000/graphql`
+1. Open: `http://localhost:5000/graphql`
 2. Paste queries from sections below
 3. Set headers for authenticated requests
 4. Click "Play" button to execute

@@ -1,41 +1,40 @@
-# Vicelle Backend - MongoDB Edition
+# Vicelle Backend - GraphQL API
 
-> Subscription-based fashion & tailoring platform backend built with Node.js, MongoDB, GraphQL, and Socket.io
+> Subscription-based fashion & tailoring platform backend built with Node.js, Firebase Firestore, GraphQL, and Cloudinary
 
 ## 🚀 Technology Stack
 
 ### Core Technologies
-- **Runtime**: Node.js 18+
-- **Framework**: Express.js
-- **API**: GraphQL (Apollo Server 4)
-- **Database**: MongoDB 6+ with Mongoose ODM
-- **Real-time**: Socket.io
-- **Authentication**: JWT (JSON Web Tokens)
+- **Runtime**: Node.js 24.x (v24.13.1)
+- **Framework**: Express.js 4.22.1
+- **API**: GraphQL 4.12.2 (Apollo Server)
+- **Database**: Firebase Firestore (Primary Storage)
+- **Cache**: Redis 5.10.0 (Session Management)
+- **Files**: Cloudinary (Images & Documents)
 
 ### Infrastructure
-- **File Storage**: Cloudinary
-- **Email Service**: NodeMailer (SMTP)
+- **Authentication**: JWT + Activation Codes (Firestore)
+- **Email Service**: NodeMailer (SMTP via Gmail)
 - **Payment Gateway**: Paystack
-- **Background Tasks**: Node-cron
-- **Session Storage**: MongoDB (with TTL indexes)
-
-### Security & Utilities
-- **Password Hashing**: bcryptjs
-- **Input Validation**: Joi
-- **Security Headers**: Helmet
-- **CORS**: cors
-- **Rate Limiting**: express-rate-limit
+- **Security**: bcryptjs, Helmet, CORS, Rate Limiting
 - **Logging**: Winston
-- **File Upload**: Multer
+
+### Key Features
+- ✅ Real-time Firestore queries with indexing
+- ✅ Redis session caching (7-day TTL)
+- ✅ Cloudinary CDN for global image delivery
+- ✅ Automatic backups with Firestore
+- ✅ GraphQL introspection with Apollo Sandbox
+- ✅ Three-tier authentication (Users, Tailors, Admins)
 
 ## 📋 Prerequisites
 
-- Node.js 18.x or higher
-- MongoDB 6.x or higher
-- npm or yarn
+- Node.js 24.x or higher
+- Firebase account with Firestore
+- Redis instance (cloud or local)
 - Cloudinary account
-- Paystack account
-- SMTP email service
+- Gmail account (for email)
+- Paystack account (optional)
 
 ## 🛠️ Installation
 
@@ -52,85 +51,119 @@ cd vicelle-backend
 npm install
 ```
 
-### 3. Setup environment variables
+### 3. Download Firebase Service Account Key
+- Go to Firebase Console
+- Project Settings → Service Account
+- Download JSON key
+- Place as `vicelle-fashion-firebase-adminsdk-fbsvc-af0ced6697.json` in project root
+
+### 4. Configure environment variables
 
 ```bash
 cp .env.example .env
 ```
 
-Edit `.env` with your configuration:
-
+Edit `.env` with:
 ```env
 # Server
 NODE_ENV=development
-PORT=4000
+PORT=5000
 
-# MongoDB
-MONGODB_URI=mongodb://localhost:27017/vicelle
+# Firebase (via service account)
+# File: vicelle-fashion-firebase-adminsdk-fbsvc-af0ced6697.json
+
+# Redis
+REDIS_URL=redis://default:PASSWORD@HOST:PORT
 
 # JWT
-JWT_SECRET=your-super-secret-key
+JWT_SECRET=your-secret-key
 JWT_EXPIRES_IN=7d
+JWT_REFRESH_SECRET=your-refresh-secret
+JWT_REFRESH_EXPIRES_IN=30d
+
+# Email
+MAILING_EMAIL=your-email@gmail.com
+MAILING_PASSWORD=your-app-password
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=465
+SMTP_SECURE=true
+EMAIL_FROM=Vicelle <noreply@vicelle.com>
 
 # Cloudinary
 CLOUDINARY_CLOUD_NAME=your-cloud-name
 CLOUDINARY_API_KEY=your-api-key
 CLOUDINARY_API_SECRET=your-api-secret
-
-# Paystack
-PAYSTACK_SECRET_KEY=sk_test_xxxxx
-PAYSTACK_PUBLIC_KEY=pk_test_xxxxx
-
-# Email (SMTP)
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
 ```
 
-### 4. Start MongoDB
+### 5. Start development server
 
 ```bash
-# Using MongoDB service
-sudo systemctl start mongod
-
-# Or using Docker
-docker run -d -p 27017:27017 --name mongodb mongo:6
-```
-
-### 5. Run the application
-
-```bash
-# Development mode with auto-reload
 npm run dev
-
-# Production mode
-npm start
 ```
+
+Server starts at: **http://localhost:5000**
+GraphQL API: **http://localhost:5000/graphql**
+
+## 📚 Documentation
+
+Start here for complete information:
+
+| Document | Purpose |
+|----------|---------|
+| **[ARCHITECTURE.md](ARCHITECTURE.md)** | Complete system architecture & data flow |
+| **[MIGRATION_GUIDE.md](MIGRATION_GUIDE.md)** | Redis → Firestore migration details |
+| **[GRAPHQL_API_DOCUMENTATION.md](GRAPHQL_API_DOCUMENTATION.md)** | Comprehensive API reference (1800+ lines) |
+| **[GRAPHQL_QUICK_REFERENCE.md](GRAPHQL_QUICK_REFERENCE.md)** | Step-by-step workflow examples |
+| **[GRAPHQL_TESTING_GUIDE.md](GRAPHQL_TESTING_GUIDE.md)** | 6 real-world testing scenarios |
+| **[GRAPHQL_ENDPOINTS_REFERENCE.md](GRAPHQL_ENDPOINTS_REFERENCE.md)** | All queries & mutations by module |
+| **[GRAPHQL_DOCUMENTATION_INDEX.md](GRAPHQL_DOCUMENTATION_INDEX.md)** | Navigation guide for all docs |
 
 ## 📁 Project Structure
 
 ```
 vicelle-backend/
 ├── src/
-│   ├── config/           # Configuration files
-│   ├── core/             # Core utilities, errors, constants
-│   ├── modules/          # Feature modules (users, orders, etc.)
-│   ├── graphql/          # GraphQL schema and resolvers
-│   ├── sockets/          # Socket.io real-time features
-│   ├── infrastructure/   # Database, storage, jobs
-│   ├── middlewares/      # Express middlewares
-│   ├── routes/           # REST routes (webhooks)
-│   └── server.js         # Application entry point
-├── tests/                # Test files
-├── logs/                 # Application logs
+│   ├── config/              # Configuration management
+│   ├── core/
+│   │   ├── constants/       # App constants
+│   │   ├── errors/          # Custom error classes
+│   │   ├── logger/          # Winston logging
+│   │   └── utils/           # Utilities (crypto, date, etc.)
+│   ├── modules/             # Feature modules
+│   │   ├── users/           # User models & logic
+│   │   ├── orders/          # Order management
+│   │   ├── subscriptions/   # Subscription handling
+│   │   ├── payments/        # Payment processing
+│   │   ├── tailors/         # Tailor profiles
+│   │   ├── measurements/    # Customer measurements
+│   │   └── ...
+│   ├── graphql/
+│   │   ├── resolvers/       # Query & mutation resolvers
+│   │   ├── typeDefs/        # GraphQL type definitions
+│   │   └── helpers.js       # GraphQL utilities
+│   ├── services/            # Business logic services
+│   │   ├── email.service.js
+│   │   └── cloudinary.service.js
+│   ├── infrastructure/
+│   │   └── database/
+│   │       ├── firebase.js  # Firestore initialization
+│   │       ├── redis.js     # Redis setup
+│   │       └── indexes.js   # Database indexes
+│   ├── middlewares/         # Express middlewares
+│   ├── routes/              # REST API routes (webhooks)
+│   ├── app.js               # Express app setup
+│   └── server.js            # Server entry point
+├── logs/                    # Application logs
+├── ARCHITECTURE.md          # System architecture
+├── MIGRATION_GUIDE.md       # Migration documentation
+├── GRAPHQL_*.md             # GraphQL API docs
 └── package.json
 ```
 
 ## 🔑 Key Features
 
 ### User/Client Features
-- ✅ Passwordless authentication (activation codes)
+- ✅ Passwordless authentication (6-digit activation codes)
 - ✅ Subscription management
 - ✅ Style selection from collections
 - ✅ Measurement submission
