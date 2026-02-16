@@ -3,7 +3,7 @@
 ## 📑 All Available Queries & Mutations by Module
 
 ### 🏗️ Current Infrastructure
-- **API Endpoint**: `http://localhost:5000/graphql`
+- **API Endpoint**: `https://vicille-server.vercel.app/graphql`
 - **Primary Database**: Firebase Firestore
 - **Session Cache**: Redis
 - **File Storage**: Cloudinary

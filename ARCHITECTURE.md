@@ -504,7 +504,7 @@ cp .env.example .env
 # Start development server
 npm run dev
 
-# Server runs on http://localhost:5000/graphql
+# Server runs on https://vicille-server.vercel.app/graphql
 ```
 
 ### Testing Firebase Locally

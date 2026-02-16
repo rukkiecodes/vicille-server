@@ -8,10 +8,10 @@
 - [ ] Download Firebase service account JSON
 - [ ] Create `.env` file with all required variables
 - [ ] Start server with `npm run dev`
-- [ ] Open http://localhost:5000/graphql
+- [ ] Open https://vicille-server.vercel.app/graphql
 
 ### Running Tests
-- [ ] Open Apollo Sandbox at http://localhost:5000/graphql
+- [ ] Open Apollo Sandbox at https://vicille-server.vercel.app/graphql
 - [ ] Copy first query from GRAPHQL_TESTING_GUIDE.md
 - [ ] Click "Play" button
 - [ ] Verify response matches expected output
@@ -166,7 +166,7 @@ GraphQL API (Apollo Server) - Port 5000
 ## 🧪 Testing Workflow
 
 ### Manual Testing
-1. Open Apollo Sandbox: http://localhost:5000/graphql
+1. Open Apollo Sandbox: https://vicille-server.vercel.app/graphql
 2. Choose scenario from GRAPHQL_TESTING_GUIDE.md
 3. Copy mutation/query
 4. Paste into Sandbox
@@ -343,6 +343,6 @@ CLOUDINARY_API_SECRET=...
 **Last Updated**: February 14, 2026  
 **Server Status**: ✅ Running on Port 5000  
 **Models Migrated to Firestore**: User, SubscriptionPlan (2 of 24)
-**API Endpoint**: http://localhost:5000/graphql
+**API Endpoint**: https://vicille-server.vercel.app/graphql
 
 **Happy Coding! 🎉**

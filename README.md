@@ -101,8 +101,8 @@ CLOUDINARY_API_SECRET=your-api-secret
 npm run dev
 ```
 
-Server starts at: **http://localhost:5000**
-GraphQL API: **http://localhost:5000/graphql**
+Server starts at: **https://vicille-server.vercel.app**
+GraphQL API: **https://vicille-server.vercel.app/graphql**
 
 ## 📚 Documentation
 

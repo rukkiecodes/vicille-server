@@ -20,12 +20,12 @@
 ### Accessing Apollo Sandbox
 Open your browser and navigate to:
 ```
-http://localhost:5000/graphql
+https://vicille-server.vercel.app/graphql
 ```
 
 ### API Endpoint
 ```
-POST http://localhost:5000/graphql
+POST https://vicille-server.vercel.app/graphql
 Content-Type: application/json
 ```
 

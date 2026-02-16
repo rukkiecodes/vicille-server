@@ -2,7 +2,7 @@
 
 ## 🚀 API Endpoint
 ```
-http://localhost:5000/graphql
+https://vicille-server.vercel.app/graphql
 ```
 
 ## 🏗️ Architecture

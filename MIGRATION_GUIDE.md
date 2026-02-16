@@ -402,7 +402,7 @@ Solution: Check Gmail app password is correct (not regular password)
 For migration questions:
 - Check `ARCHITECTURE.md` for detailed info
 - Review `GRAPHQL_API_DOCUMENTATION.md` for API details
-- Test in Apollo Sandbox at `http://localhost:5000/graphql`
+- Test in Apollo Sandbox at `https://vicille-server.vercel.app/graphql`
 
 ---
 

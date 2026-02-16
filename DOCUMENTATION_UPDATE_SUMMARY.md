@@ -237,7 +237,7 @@ npm install
 npm run dev
 
 # Access
-http://localhost:5000/graphql
+https://vicille-server.vercel.app/graphql
 ```
 
 ### Complete Details
@@ -344,7 +344,7 @@ All documentation files are in the project root:
 
 **Current Status**: ✅ Running
 - **Port**: 5000
-- **GraphQL Endpoint**: http://localhost:5000/graphql
+- **GraphQL Endpoint**: https://vicille-server.vercel.app/graphql
 - **Database**: Firebase Firestore (✅ Connected)
 - **Cache**: Redis (✅ Connected)
 - **File Storage**: Cloudinary (✅ Configured)
