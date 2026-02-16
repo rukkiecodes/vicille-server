@@ -47,8 +47,9 @@ const transports = [
   }),
 ];
 
-// Add file transport in non-test environments
-if (!config.isTest) {
+// Add file transport in non-test, non-production environments
+// (Production/Vercel uses Vercel's log capture)
+if (!config.isTest && !config.isProd) {
   const logsDir = path.resolve(__dirname, '../../../logs');
 
   transports.push(
