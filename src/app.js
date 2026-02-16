@@ -39,6 +39,11 @@ app.use(
 // Compression
 app.use(compression());
 
+// Favicon handler (prevent 404 warnings)
+app.get('/favicon.ico', (req, res) => {
+  res.status(204).end();
+});
+
 // Body parsing - raw body for webhooks
 app.use('/webhooks', express.raw({ type: 'application/json' }));
 app.use((req, res, next) => {

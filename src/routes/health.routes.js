@@ -4,19 +4,33 @@ import { isRedisConnected } from '../infrastructure/database/redis.js';
 const router = Router();
 
 /**
- * Health check endpoint
+ * Health check response generator
  */
-router.get('/health', (req, res) => {
+const getHealthCheck = () => {
   const redisHealthy = isRedisConnected();
-  const healthcheck = {
+  return {
     status: redisHealthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
     redis: redisHealthy ? 'connected' : 'disconnected',
   };
+};
 
-  const status = redisHealthy ? 200 : 503;
+/**
+ * Root endpoint - returns health status by default
+ */
+router.get('/', (req, res) => {
+  const healthcheck = getHealthCheck();
+  const status = healthcheck.status === 'ok' ? 200 : 503;
+  res.status(status).json(healthcheck);
+});
 
+/**
+ * Health check endpoint
+ */
+router.get('/health', (req, res) => {
+  const healthcheck = getHealthCheck();
+  const status = healthcheck.status === 'ok' ? 200 : 503;
   res.status(status).json(healthcheck);
 });
 
