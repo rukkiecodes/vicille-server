@@ -106,6 +106,3 @@ app.use(async (req, res, next) => {
 
 // Export for Vercel
 export default app;
-
-// Export for Vercel
-export default app;
