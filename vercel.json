@@ -5,12 +5,6 @@
   "env": {
     "NODE_ENV": "production"
   },
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/src/server.js"
-    }
-  ],
   "functions": {
     "src/server.js": {
       "runtime": "nodejs20.x",
