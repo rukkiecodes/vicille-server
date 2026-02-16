@@ -47,9 +47,9 @@ const transports = [
   }),
 ];
 
-// Add file transport in non-test, non-production environments
-// (Production/Vercel uses Vercel's log capture)
-if (!config.isTest && !config.isProd) {
+// Add file transport only in local development
+// (Vercel's serverless filesystem is read-only)
+if (!config.isTest && !config.isProd && !process.env.VERCEL) {
   const logsDir = path.resolve(__dirname, '../../../logs');
 
   transports.push(
