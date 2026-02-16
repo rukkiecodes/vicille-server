@@ -45,12 +45,12 @@ const config = {
 
   // Email (SMTP)
   email: {
-    host: process.env.SMTP_HOST || 'smtp.gmail.com',
-    port: parseInt(process.env.SMTP_PORT, 10) || 587,
-    secure: process.env.SMTP_SECURE === 'true',
-    user: process.env.MAILING_EMAIL || process.env.SMTP_USER,
-    password: process.env.MAILING_PASSWORD || process.env.SMTP_PASSWORD,
-    from: process.env.EMAIL_FROM || 'Vicelle <noreply@vicelle.com>',
+    host: process.env.SMTP_HOST || 'smtp.titan.email', // Will use Titan
+    port: parseInt(process.env.SMTP_PORT, 10) || 465, // Will use 465
+    secure: process.env.SMTP_SECURE === 'true', // Will be true
+    user: process.env.MAILING_EMAIL || process.env.SMTP_USER, // Will use hello@vicelleclothing.com
+    password: process.env.MAILING_PASSWORD || process.env.SMTP_PASSWORD, // Will use the Titan password
+    from: process.env.EMAIL_FROM || 'Vicelle Clothing <hello@vicelleclothing.com>',
   },
 
   // Payment (Paystack)
