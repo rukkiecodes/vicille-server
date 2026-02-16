@@ -37,58 +37,192 @@ const getTransporter = () => {
 };
 
 /**
- * Send activation code email
+ * Send activation code email with STYLE-U By VICELLE template
  */
 const sendActivationCodeEmail = async (email, fullName, activationCode) => {
   try {
     const transporter = getTransporter();
+
+    // Format the activation code with spaces between each digit
+    const formattedCode = activationCode.toString().split('').join(' ');
 
     const htmlContent = `
       <!DOCTYPE html>
       <html>
         <head>
           <style>
-            body { font-family: Arial, sans-serif; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #f8f9fa; padding: 20px; border-radius: 5px; }
-            .content { padding: 20px 0; }
-            .code-box { background-color: #f0f0f0; padding: 20px; border-radius: 5px; text-align: center; margin: 20px 0; }
-            .code { font-size: 32px; font-weight: bold; letter-spacing: 5px; color: #000; }
-            .footer { color: #666; font-size: 12px; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }
+            body { 
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+              color: #333; 
+              line-height: 1.6;
+              margin: 0;
+              padding: 0;
+            }
+            .container { 
+              max-width: 600px; 
+              margin: 0 auto; 
+              padding: 20px; 
+            }
+            .header { 
+              background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+              color: white;
+              padding: 40px 20px; 
+              border-radius: 10px 10px 0 0; 
+              text-align: center;
+            }
+            .header h1 {
+              margin: 0;
+              font-size: 32px;
+              font-weight: 300;
+              letter-spacing: 1px;
+            }
+            .header h2 {
+              margin: 10px 0 0;
+              font-size: 18px;
+              font-weight: 300;
+              opacity: 0.9;
+            }
+            .content { 
+              background-color: #ffffff;
+              padding: 40px 30px; 
+              border: 1px solid #eaeef2;
+              border-top: none;
+              border-radius: 0 0 10px 10px;
+            }
+            .greeting {
+              font-size: 18px;
+              margin-bottom: 20px;
+            }
+            .message {
+              color: #4a5568;
+              margin-bottom: 30px;
+            }
+            .code-box { 
+              background: linear-gradient(135deg, #f5f7fa 0%, #e4e8f0 100%);
+              padding: 30px; 
+              border-radius: 10px; 
+              text-align: center; 
+              margin: 30px 0; 
+              border: 2px dashed #667eea;
+            }
+            .code { 
+              font-size: 42px; 
+              font-weight: bold; 
+              letter-spacing: 8px; 
+              color: #667eea; 
+              font-family: 'Courier New', monospace;
+            }
+            .importance-note {
+              background-color: #fff3cd;
+              border-left: 4px solid #ffc107;
+              padding: 15px;
+              margin: 25px 0;
+              border-radius: 5px;
+            }
+            .importance-note p {
+              margin: 0;
+              color: #856404;
+            }
+            .action-required {
+              background-color: #f8f9fa;
+              padding: 20px;
+              border-radius: 8px;
+              margin: 25px 0;
+            }
+            .action-required h3 {
+              margin: 0 0 10px 0;
+              color: #333;
+            }
+            .action-required p {
+              margin: 5px 0;
+              color: #4a5568;
+            }
+            .footer { 
+              margin-top: 40px;
+              padding-top: 20px;
+              border-top: 2px solid #eaeef2;
+              text-align: center;
+            }
+            .footer p {
+              color: #718096;
+              font-size: 14px;
+              margin: 5px 0;
+            }
+            .footer .brand {
+              font-weight: bold;
+              color: #667eea;
+              font-size: 16px;
+            }
           </style>
         </head>
         <body>
           <div class="container">
             <div class="header">
-              <h1>Welcome to Vicelle! 👋</h1>
+              <h1>STYLE-U By VICELLE</h1>
+              <h2>Your Premium Style Journey Begins</h2>
             </div>
             <div class="content">
-              <p>Hi ${fullName},</p>
-              <p>Thank you for signing up with Vicelle. To complete your registration, please use the activation code below:</p>
-              
-              <div class="code-box">
-                <div class="code">${activationCode}</div>
+              <div class="greeting">
+                <p>Hi ${fullName},</p>
               </div>
               
-              <p>This code will expire in 365 days. Do not share this code with anyone.</p>
+              <div class="message">
+                <p>Thank you for joining the Vicelle waiting list. To ensure a seamless transition to our premium mobile experience, we have generated your unique Activation Code.</p>
+              </div>
               
-              <p>If you didn't sign up for this account, you can safely ignore this email.</p>
-            </div>
-            <div class="footer">
-              <p>&copy; 2026 Vicelle. All rights reserved.</p>
-              <p>Vicelle - Premium Fashion & Tailoring Services</p>
+              <div class="code-box">
+                <div class="code">${formattedCode}</div>
+              </div>
+              
+              <div class="importance-note">
+                <p><strong>Why is this important?</strong><br>
+                This code is the only way to complete your registration once the Vicelle App launches (Late Feb / March 2026). On the app, you will finalize your measurements, select your subscription tier, and begin your curated style journey.</p>
+              </div>
+              
+              <div class="action-required">
+                <h3>📌 Action Required:</h3>
+                <p>Please mark this email as <strong>Important</strong> or save this code in a safe place. You will be notified the moment the app is ready for download.</p>
+              </div>
+              
+              <div class="footer">
+                <p class="brand">— The Vicelle Team</p>
+                <p>We look forward to styling you soon.</p>
+                <p>&copy; ${new Date().getFullYear()} Vicelle. All rights reserved.</p>
+              </div>
             </div>
           </div>
         </body>
       </html>
     `;
 
+    const textContent = `
+STYLE-U By VICELLE - Your Vicelle Access Key: ${activationCode} (Save This Email)
+
+Welcome to STYLE-U By VICELLE
+
+Hi ${fullName},
+
+Thank you for joining the Vicelle waiting list. To ensure a seamless transition to our premium mobile experience, we have generated your unique Activation Code.
+
+${activationCode}
+
+Why is this important?
+This code is the only way to complete your registration once the Vicelle App launches (Late Feb / March 2026). On the app, you will finalize your measurements, select your subscription tier, and begin your curated style journey.
+
+Action Required:
+Please mark this email as Important or save this code in a safe place. You will be notified the moment the app is ready for download.
+
+We look forward to styling you soon.
+
+— The Vicelle Team
+    `;
+
     const mailOptions = {
       from: config.email.from,
       to: email,
-      subject: 'Your Vicelle Activation Code',
+      subject: `Your Vicelle Access Key: ${activationCode} (Save This Email)`,
       html: htmlContent,
-      text: `Your activation code is: ${activationCode}. This code will expire in 365 days.`,
+      text: textContent,
     };
 
     const result = await transporter.sendMail(mailOptions);
@@ -101,7 +235,7 @@ const sendActivationCodeEmail = async (email, fullName, activationCode) => {
 };
 
 /**
- * Send order confirmation email
+ * Send order confirmation email (keep existing template or update as needed)
  */
 const sendOrderConfirmationEmail = async (email, fullName, orderDetails) => {
   try {
@@ -112,18 +246,19 @@ const sendOrderConfirmationEmail = async (email, fullName, orderDetails) => {
       <html>
         <head>
           <style>
-            body { font-family: Arial, sans-serif; color: #333; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #f8f9fa; padding: 20px; border-radius: 5px; }
-            .content { padding: 20px 0; }
-            .order-details { background-color: #f0f0f0; padding: 20px; border-radius: 5px; margin: 20px 0; }
-            .footer { color: #666; font-size: 12px; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; border-radius: 10px 10px 0 0; text-align: center; }
+            .content { padding: 30px; background: white; border: 1px solid #eaeef2; border-top: none; border-radius: 0 0 10px 10px; }
+            .order-details { background-color: #f8f9fa; padding: 20px; border-radius: 8px; margin: 20px 0; }
+            .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eaeef2; color: #718096; }
           </style>
         </head>
         <body>
           <div class="container">
             <div class="header">
-              <h1>Order Confirmation 📦</h1>
+              <h1>STYLE-U By VICELLE</h1>
+              <h2>Order Confirmation</h2>
             </div>
             <div class="content">
               <p>Hi ${fullName},</p>
@@ -138,9 +273,10 @@ const sendOrderConfirmationEmail = async (email, fullName, orderDetails) => {
               </div>
               
               <p>You can track your order status in your Vicelle dashboard.</p>
-            </div>
-            <div class="footer">
-              <p>&copy; 2026 Vicelle. All rights reserved.</p>
+              
+              <div class="footer">
+                <p>— The Vicelle Team</p>
+              </div>
             </div>
           </div>
         </body>
@@ -165,7 +301,7 @@ const sendOrderConfirmationEmail = async (email, fullName, orderDetails) => {
 };
 
 /**
- * Send payment confirmation email
+ * Send payment confirmation email (keep existing or update as needed)
  */
 const sendPaymentConfirmationEmail = async (email, fullName, paymentDetails) => {
   try {
@@ -176,18 +312,19 @@ const sendPaymentConfirmationEmail = async (email, fullName, paymentDetails) => 
       <html>
         <head>
           <style>
-            body { font-family: Arial, sans-serif; color: #333; }
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #333; }
             .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #f8f9fa; padding: 20px; border-radius: 5px; }
-            .content { padding: 20px 0; }
-            .payment-box { background-color: #e8f5e9; padding: 20px; border-radius: 5px; margin: 20px 0; }
-            .footer { color: #666; font-size: 12px; margin-top: 20px; border-top: 1px solid #ddd; padding-top: 10px; }
+            .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; border-radius: 10px 10px 0 0; text-align: center; }
+            .content { padding: 30px; background: white; border: 1px solid #eaeef2; border-top: none; border-radius: 0 0 10px 10px; }
+            .payment-box { background-color: #e8f5e9; padding: 20px; border-radius: 8px; margin: 20px 0; }
+            .footer { text-align: center; margin-top: 30px; padding-top: 20px; border-top: 1px solid #eaeef2; color: #718096; }
           </style>
         </head>
         <body>
           <div class="container">
             <div class="header">
-              <h1>Payment Confirmed ✅</h1>
+              <h1>STYLE-U By VICELLE</h1>
+              <h2>Payment Confirmed</h2>
             </div>
             <div class="content">
               <p>Hi ${fullName},</p>
@@ -201,9 +338,10 @@ const sendPaymentConfirmationEmail = async (email, fullName, paymentDetails) => 
               </div>
               
               <p>Thank you for your payment. Your order is being processed.</p>
-            </div>
-            <div class="footer">
-              <p>&copy; 2026 Vicelle. All rights reserved.</p>
+              
+              <div class="footer">
+                <p>— The Vicelle Team</p>
+              </div>
             </div>
           </div>
         </body>
