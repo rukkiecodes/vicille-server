@@ -7,6 +7,16 @@ const DateTimeScalar = new GraphQLScalarType({
     if (value instanceof Date) {
       return value.toISOString();
     }
+    // Firestore Timestamp: has toDate() method or _seconds/_nanoseconds properties
+    if (value !== null && typeof value === 'object') {
+      if (typeof value.toDate === 'function') {
+        return value.toDate().toISOString();
+      }
+      const seconds = value._seconds ?? value.seconds;
+      if (typeof seconds === 'number') {
+        return new Date(seconds * 1000).toISOString();
+      }
+    }
     if (typeof value === 'string' || typeof value === 'number') {
       return new Date(value).toISOString();
     }
