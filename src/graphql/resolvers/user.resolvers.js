@@ -135,12 +135,14 @@ const userResolvers = {
       };
 
       if (data) {
-        const existingData = user.onboardingData ? JSON.parse(user.onboardingData) : {};
+        const existingData = user.onboardingData
+          ? (typeof user.onboardingData === 'string' ? JSON.parse(user.onboardingData) : user.onboardingData)
+          : {};
         updateData.onboardingData = { ...existingData, [`step${step}`]: data };
       }
 
-      // Check if onboarding is complete (assuming 5 steps)
-      if (step >= 5) {
+      // Check if onboarding is complete (4 steps in the app)
+      if (step >= 4) {
         updateData.onboardingCompleted = true;
       }
 
