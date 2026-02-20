@@ -1,366 +1,204 @@
-import { getFirestore } from '../../infrastructure/database/firebase.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
 
-const COLLECTION = 'measurements';
-const CACHE_TTL = 3600; // 1 hour
+const CACHE_TTL = 3600;
 
-// Helper: Parse JSON fields from Firestore
-function parseJsonFields(measurement) {
-  if (!measurement) return null;
+function format(row) {
+  if (!row) return null;
   return {
-    ...measurement,
-    capturedBy: typeof measurement.capturedBy === 'string' ? JSON.parse(measurement.capturedBy) : measurement.capturedBy,
-    measurements: typeof measurement.measurements === 'string' ? JSON.parse(measurement.measurements) : measurement.measurements,
-    delta: typeof measurement.delta === 'string' ? JSON.parse(measurement.delta) : measurement.delta,
+    id:              row.id,
+    entityId:        row.id,
+    user:            row.user_id,
+    userId:          row.user_id,
+    source:          row.source,
+    capturedBy:      row.captured_by,
+    measurements:    row.measurements,
+    fit:             row.fit,
+    version:         row.version,
+    previousVersion: row.previous_version,
+    delta:           row.delta,
+    isActive:        row.is_active,
+    queuedForCycle:  row.queued_for_cycle,
+    notes:           row.notes,
+    capturedAt:      row.captured_at,
+    appliedAt:       row.applied_at,
+    createdAt:       row.created_at,
+    updatedAt:       row.updated_at,
   };
 }
 
-// Helper: Stringify JSON fields for Firestore
-function stringifyJsonFields(data) {
-  const result = { ...data };
-  if (result.capturedBy && typeof result.capturedBy === 'object') {
-    result.capturedBy = JSON.stringify(result.capturedBy);
-  }
-  if (result.measurements && typeof result.measurements === 'object') {
-    result.measurements = JSON.stringify(result.measurements);
-  }
-  if (result.delta && typeof result.delta === 'object') {
-    result.delta = JSON.stringify(result.delta);
-  }
-  return result;
-}
-
-// Helper: Cache management
-async function cacheMeasurement(measurement) {
+async function cacheMeasurement(m) {
   try {
     const redis = getRedisClient();
-    if (redis && measurement?.id) {
-      await redis.setex(
-        `measurement:${measurement.id}`,
-        CACHE_TTL,
-        JSON.stringify(measurement)
-      );
-    }
-  } catch (error) {
-    // Cache errors are non-fatal
-  }
+    if (redis && m?.id) await redis.set(`measurement:${m.id}`, JSON.stringify(m), { EX: CACHE_TTL });
+  } catch { /* non-fatal */ }
 }
 
 async function getCachedMeasurement(id) {
   try {
     const redis = getRedisClient();
-    if (redis) {
-      const cached = await redis.get(`measurement:${id}`);
-      if (cached) return JSON.parse(cached);
-    }
-  } catch (error) {
-    // Cache errors are non-fatal
-  }
-  return null;
+    const cached = await redis.get(`measurement:${id}`);
+    return cached ? JSON.parse(cached) : null;
+  } catch { return null; }
 }
 
 async function clearMeasurementCache(id) {
-  try {
-    const redis = getRedisClient();
-    if (redis && id) {
-      await redis.del(`measurement:${id}`);
-    }
-  } catch (error) {
-    // Cache errors are non-fatal
-  }
+  try { const redis = getRedisClient(); await redis.del(`measurement:${id}`); } catch { /* non-fatal */ }
 }
 
-// Measurement Model
 const MeasurementModel = {
-  /**
-   * Create a new measurement
-   */
-  async create(measurementData) {
-    const db = getFirestore();
-    const now = new Date();
-    const docRef = db.collection(COLLECTION).doc();
-
-    // Get the latest version for this user to auto-increment version
+  async create(data) {
     let version = 1;
     let previousVersion = null;
-
-    if (measurementData.user) {
-      const query = db.collection(COLLECTION)
-        .where('user', '==', measurementData.user)
-        .orderBy('version', 'desc')
-        .limit(1);
-      
-      const snapshot = await query.get();
-      if (!snapshot.empty) {
-        const latest = snapshot.docs[0].data();
-        version = (latest.version || 0) + 1;
-        previousVersion = snapshot.docs[0].id;
-      }
+    const userId = data.user || data.userId;
+    if (userId) {
+      const { rows: prev } = await query(
+        'SELECT id, version FROM measurements WHERE user_id=$1 ORDER BY version DESC LIMIT 1', [userId]
+      );
+      if (prev.length) { version = (prev[0].version || 0) + 1; previousVersion = prev[0].id; }
     }
 
-    const measurementWithDefaults = stringifyJsonFields({
-      user: measurementData.user,
-      source: measurementData.source,
-      capturedBy: measurementData.capturedBy || null,
-      measurements: measurementData.measurements || null,
-      fit: measurementData.fit || 'regular',
-      version: measurementData.version || version,
-      previousVersion: measurementData.previousVersion || previousVersion,
-      delta: measurementData.delta || null,
-      isActive: measurementData.isActive || false,
-      queuedForCycle: measurementData.queuedForCycle || null,
-      notes: measurementData.notes || null,
-      capturedAt: measurementData.capturedAt || now,
-      appliedAt: measurementData.appliedAt || null,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    await docRef.set(measurementWithDefaults);
-    const created = parseJsonFields({ id: docRef.id, ...measurementWithDefaults });
-    
-    await cacheMeasurement(created);
-    return created;
+    const { rows } = await query(
+      `INSERT INTO measurements
+         (user_id, source, captured_by, measurements, fit, version, previous_version,
+          delta, is_active, queued_for_cycle, notes, captured_at, applied_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [
+        userId,
+        data.source || null,
+        data.capturedBy || null,
+        data.measurements || null,
+        data.fit || 'regular',
+        data.version || version,
+        data.previousVersion || previousVersion,
+        data.delta || null,
+        data.isActive || false,
+        data.queuedForCycle || null,
+        data.notes || null,
+        data.capturedAt || new Date(),
+        data.appliedAt || null,
+      ]
+    );
+    const m = format(rows[0]);
+    await cacheMeasurement(m);
+    return m;
   },
 
-  /**
-   * Find measurement by ID
-   */
   async findById(id) {
-    // Try cache first
     const cached = await getCachedMeasurement(id);
     if (cached) return cached;
-
-    const db = getFirestore();
-    const doc = await db.collection(COLLECTION).doc(id).get();
-    
-    if (!doc.exists || !doc.data().user) return null;
-    
-    const measurement = parseJsonFields({ id: doc.id, ...doc.data() });
-    await cacheMeasurement(measurement);
-    
-    return measurement;
+    const { rows } = await query('SELECT * FROM measurements WHERE id=$1', [id]);
+    const m = format(rows[0] || null);
+    if (m) await cacheMeasurement(m);
+    return m;
   },
 
-  /**
-   * Update measurement by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const db = getFirestore();
-    const docRef = db.collection(COLLECTION).doc(id);
-    const doc = await docRef.get();
-    
-    if (!doc.exists || !doc.data().user) return null;
-
-    const updateWithDefaults = stringifyJsonFields({
-      ...updateData,
-      updatedAt: new Date(),
-    });
-
-    await docRef.update(updateWithDefaults);
-    
-    const updated = doc.data();
-    const result = parseJsonFields({ id: doc.id, ...updated, ...updateWithDefaults });
-    
-    await clearMeasurementCache(id);
-    await cacheMeasurement(result);
-    
-    return result;
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      source:         'source',
+      capturedBy:     'captured_by',
+      measurements:   'measurements',
+      fit:            'fit',
+      isActive:       'is_active',
+      queuedForCycle: 'queued_for_cycle',
+      notes:          'notes',
+      appliedAt:      'applied_at',
+      delta:          'delta',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+    }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE measurements SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    const m = format(rows[0] || null);
+    if (m) { await clearMeasurementCache(id); await cacheMeasurement(m); }
+    return m;
   },
 
-  /**
-   * Find measurements with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const db = getFirestore();
-    let firestoreQuery = db.collection(COLLECTION);
-
-    // Apply filters
-    if (query.user) {
-      firestoreQuery = firestoreQuery.where('user', '==', query.user);
-    }
-    if (query.source) {
-      firestoreQuery = firestoreQuery.where('source', '==', query.source);
-    }
-    if (query.isActive !== undefined) {
-      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
-    }
-    if (query.queuedForCycle !== undefined) {
-      firestoreQuery = firestoreQuery.where('queuedForCycle', '==', query.queuedForCycle);
-    }
-
-    // Apply sorting and pagination
-    firestoreQuery = firestoreQuery.orderBy('capturedAt', 'desc');
-    
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const countQuery = await firestoreQuery.count().get();
-    const total = countQuery.data().count;
-
-    const querySnapshot = await firestoreQuery
-      .offset(offset)
-      .limit(limit)
-      .get();
-
-    const measurements = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    })).map(parseJsonFields);
-
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)   { conds.push(`user_id=$${i++}`); vals.push(filters.user); }
+    if (filters.userId) { conds.push(`user_id=$${i++}`); vals.push(filters.userId); }
+    if (filters.source) { conds.push(`source=$${i++}`);  vals.push(filters.source); }
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`); vals.push(filters.isActive); }
+    if (filters.queuedForCycle !== undefined) { conds.push(`queued_for_cycle=$${i++}`); vals.push(filters.queuedForCycle); }
+    const total = parseInt(
+      (await query(`SELECT COUNT(*) AS cnt FROM measurements WHERE ${conds.join(' AND ')}`, vals)).rows[0].cnt, 10
+    );
+    const { rows } = await query(
+      `SELECT * FROM measurements WHERE ${conds.join(' AND ')} ORDER BY captured_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
     return {
-      data: measurements,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      data: rows.map(format),
+      pagination: { page: Math.floor(offset / limit) + 1, limit, total, pages: Math.ceil(total / limit) },
     };
   },
 
-  /**
-   * Count measurements
-   */
-  async countDocuments(query = {}) {
-    const db = getFirestore();
-    let firestoreQuery = db.collection(COLLECTION);
-
-    if (query.user) {
-      firestoreQuery = firestoreQuery.where('user', '==', query.user);
-    }
-    if (query.source) {
-      firestoreQuery = firestoreQuery.where('source', '==', query.source);
-    }
-    if (query.isActive !== undefined) {
-      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
-    }
-
-    const countQuery = await firestoreQuery.count().get();
-    return countQuery.data().count;
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)   { conds.push(`user_id=$${i++}`); vals.push(filters.user); }
+    if (filters.source) { conds.push(`source=$${i++}`);  vals.push(filters.source); }
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`); vals.push(filters.isActive); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM measurements WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete measurement (hard delete)
-   */
   async delete(id) {
-    const db = getFirestore();
-    await db.collection(COLLECTION).doc(id).delete();
+    await query('DELETE FROM measurements WHERE id=$1', [id]);
     await clearMeasurementCache(id);
   },
 
-  /**
-   * Get active measurement for user
-   */
   async getActiveForUser(userId) {
-    const db = getFirestore();
-    const query = db.collection(COLLECTION)
-      .where('user', '==', userId)
-      .where('isActive', '==', true)
-      .limit(1);
-    
-    const snapshot = await query.get();
-    if (snapshot.empty) return null;
-    
-    const doc = snapshot.docs[0];
-    return parseJsonFields({ id: doc.id, ...doc.data() });
+    const { rows } = await query(
+      'SELECT * FROM measurements WHERE user_id=$1 AND is_active=TRUE LIMIT 1', [userId]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Get measurement history for user
-   */
   async getHistoryForUser(userId, limit = 10) {
-    const db = getFirestore();
-    const query = db.collection(COLLECTION)
-      .where('user', '==', userId)
-      .orderBy('version', 'desc')
-      .limit(limit);
-    
-    const snapshot = await query.get();
-    return snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
+    const { rows } = await query(
+      'SELECT * FROM measurements WHERE user_id=$1 ORDER BY version DESC LIMIT $2', [userId, limit]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Get queued measurements for a cycle
-   */
   async getQueuedForCycle(cycleNumber) {
-    const db = getFirestore();
-    const query = db.collection(COLLECTION)
-      .where('queuedForCycle', '==', cycleNumber)
-      .where('isActive', '==', false);
-    
-    const snapshot = await query.get();
-    return snapshot.docs.map(doc => parseJsonFields({ id: doc.id, ...doc.data() }));
+    const { rows } = await query(
+      'SELECT * FROM measurements WHERE queued_for_cycle=$1 AND is_active=FALSE', [cycleNumber]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Make measurement active
-   */
   async makeActive(id) {
-    const db = getFirestore();
-    const docRef = db.collection(COLLECTION).doc(id);
-    const doc = await docRef.get();
-    
-    if (!doc.exists || !doc.data().user) return null;
-
-    const measurement = doc.data();
-    const userId = measurement.user;
-
-    // Deactivate all other measurements for this user
-    const userMeasurements = await db.collection(COLLECTION)
-      .where('user', '==', userId)
-      .get();
-
-    const batch = db.batch();
-
-    for (const userDoc of userMeasurements.docs) {
-      if (userDoc.id !== id && userDoc.data().isActive) {
-        batch.update(userDoc.ref, {
-          isActive: false,
-          updatedAt: new Date(),
-        });
-        await clearMeasurementCache(userDoc.id);
-      }
-    }
-
-    // Activate this measurement
-    batch.update(docRef, {
-      isActive: true,
-      appliedAt: new Date(),
-      updatedAt: new Date(),
-    });
-
-    await batch.commit();
-
-    const updated = parseJsonFields({ id, ...measurement, isActive: true, appliedAt: new Date(), updatedAt: new Date() });
-    await clearMeasurementCache(id);
-    await cacheMeasurement(updated);
-    
+    const m = await this.findById(id);
+    if (!m) return null;
+    await query('UPDATE measurements SET is_active=FALSE WHERE user_id=$1 AND id<>$2', [m.userId, id]);
+    const { rows } = await query(
+      'UPDATE measurements SET is_active=TRUE, applied_at=NOW() WHERE id=$1 RETURNING *', [id]
+    );
+    const updated = format(rows[0] || null);
+    if (updated) { await clearMeasurementCache(id); await cacheMeasurement(updated); }
     return updated;
   },
 
-  /**
-   * Queue measurement for next cycle
-   */
   async queueForNextCycle(id, cycleNumber) {
-    const db = getFirestore();
-    const docRef = db.collection(COLLECTION).doc(id);
-    const doc = await docRef.get();
-    
-    if (!doc.exists || !doc.data().user) return null;
-
-    const updateData = {
-      queuedForCycle: cycleNumber,
-      updatedAt: new Date(),
-    };
-
-    await docRef.update(updateData);
-    
-    const updated = parseJsonFields({ id, ...doc.data(), ...updateData });
-    await clearMeasurementCache(id);
-    await cacheMeasurement(updated);
-    
+    const { rows } = await query(
+      'UPDATE measurements SET queued_for_cycle=$1 WHERE id=$2 RETURNING *', [cycleNumber, id]
+    );
+    const updated = format(rows[0] || null);
+    if (updated) { await clearMeasurementCache(id); await cacheMeasurement(updated); }
     return updated;
   },
 };

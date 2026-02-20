@@ -1,468 +1,309 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { generateJobNumber } from '../../core/utils/randomCode.js';
 import { JOB_STATUS } from '../../core/constants/tailorStatus.js';
 
-// Job Entity class
-class Model {
-  // Get parsed materials required
-  get materialsRequiredParsed() {
-    return this.materialsRequired ? JSON.parse(this.materialsRequired) : [];
-  }
+function format(row) {
+  if (!row) return null;
+  const j = {
+    id:                   row.id,
+    entityId:             row.id,
+    jobNumber:            row.job_number,
+    clientTag:            row.client_tag,
+    order:                row.order_id,
+    orderId:              row.order_id,
+    orderItems:           row.order_item_ids || [],
+    user:                 row.user_id,
+    userId:               row.user_id,
+    tailor:               row.tailor_id,
+    tailorId:             row.tailor_id,
+    assignedBy:           row.assigned_by,
+    assignmentType:       row.assignment_type,
+    measurements:         row.measurements,
+    stylistInstructions:  row.stylist_instructions,
+    materialsRequired:    row.materials_required || [],
+    materialsIssued:      row.materials_issued,
+    materialsReceivedAt:  row.materials_received_at,
+    materialsReceivedBy:  row.materials_received_by,
+    dueDate:              row.due_date,
+    startedAt:            row.started_at,
+    completedAt:          row.completed_at,
+    status:               row.status,
+    statusHistory:        row.status_history || [],
+    completionProof:      row.completion_proof,
+    qcReview:             row.qc_review_id,
+    commission:           row.commission,
+    payout:               row.payout_id,
+    isPaid:               row.is_paid,
+    reassignments:        row.reassignments || [],
+    isFlagged:            row.is_flagged,
+    flagReason:           row.flag_reason,
+    flaggedBy:            row.flagged_by,
+    resolvedAt:           row.resolved_at,
+    createdAt:            row.created_at,
+    updatedAt:            row.updated_at,
+  };
 
-  // Get parsed status history
-  get statusHistoryParsed() {
-    return this.statusHistory ? JSON.parse(this.statusHistory) : [];
-  }
+  Object.defineProperties(j, {
+    isOverdue: { get() {
+      if (!this.dueDate) return false;
+      const done = [JOB_STATUS.COMPLETED, JOB_STATUS.QC_APPROVED, JOB_STATUS.QC_REJECTED];
+      if (done.includes(this.status)) return false;
+      return new Date() > new Date(this.dueDate);
+    }},
+    daysUntilDue: { get() {
+      if (!this.dueDate) return null;
+      return Math.ceil((new Date(this.dueDate) - new Date()) / 86400000);
+    }},
+    isComplete: { get() {
+      return [JOB_STATUS.COMPLETED, JOB_STATUS.QC_APPROVED].includes(this.status);
+    }},
+  });
 
-  // Get parsed completion proof
-  get completionProofParsed() {
-    return this.completionProof ? JSON.parse(this.completionProof) : null;
-  }
+  j.toSafeJSON = () => ({
+    ...j, isOverdue: j.isOverdue, daysUntilDue: j.daysUntilDue, isComplete: j.isComplete,
+  });
 
-  // Get parsed reassignments
-  get reassignmentsParsed() {
-    return this.reassignments ? JSON.parse(this.reassignments) : [];
-  }
-
-  // Get parsed measurements
-  get measurementsParsed() {
-    return this.measurements ? JSON.parse(this.measurements) : null;
-  }
-
-  // Get parsed order items
-  get orderItemsParsed() {
-    return this.orderItems ? JSON.parse(this.orderItems) : [];
-  }
-
-  // Check if overdue
-  get isOverdue() {
-    if (!this.dueDate) return false;
-    const completedStatuses = [JOB_STATUS.COMPLETED, JOB_STATUS.QC_APPROVED, JOB_STATUS.QC_REJECTED];
-    if (completedStatuses.includes(this.status)) return false;
-    return new Date() > new Date(this.dueDate);
-  }
-
-  // Get days until due
-  get daysUntilDue() {
-    if (!this.dueDate) return null;
-    const now = new Date();
-    const diff = new Date(this.dueDate) - now;
-    return Math.ceil(diff / (1000 * 60 * 60 * 24));
-  }
-
-  // Check if complete
-  get isComplete() {
-    return [JOB_STATUS.COMPLETED, JOB_STATUS.QC_APPROVED].includes(this.status);
-  }
-
-  // Convert to safe JSON
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      jobNumber: this.jobNumber,
-      clientTag: this.clientTag,
-      order: this.order,
-      orderItems: this.orderItemsParsed,
-      user: this.user,
-      tailor: this.tailor,
-      assignedBy: this.assignedBy,
-      assignmentType: this.assignmentType,
-      measurements: this.measurementsParsed,
-      stylistInstructions: this.stylistInstructions,
-      materialsRequired: this.materialsRequiredParsed,
-      materialsIssued: this.materialsIssued,
-      materialsReceivedAt: this.materialsReceivedAt,
-      materialsReceivedBy: this.materialsReceivedBy,
-      dueDate: this.dueDate,
-      startedAt: this.startedAt,
-      completedAt: this.completedAt,
-      status: this.status,
-      statusHistory: this.statusHistoryParsed,
-      completionProof: this.completionProofParsed,
-      qcReview: this.qcReview,
-      commission: this.commission,
-      payout: this.payout,
-      isPaid: this.isPaid,
-      reassignments: this.reassignmentsParsed,
-      isFlagged: this.isFlagged,
-      flagReason: this.flagReason,
-      flaggedBy: this.flaggedBy,
-      resolvedAt: this.resolvedAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isOverdue: this.isOverdue,
-      daysUntilDue: this.daysUntilDue,
-      isComplete: this.isComplete,
-    };
-  }
+  return j;
 }
 
-// Job Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods
 const JobModel = {
-  /**
-   * Create a new job
-   */
-  async create(jobData) {
-    const repo = await getJobRepository();
-
-    const now = new Date();
-    const jobNumber = jobData.jobNumber || generateJobNumber();
-
+  async create(data) {
+    const jobNumber = data.jobNumber || generateJobNumber();
     const initialStatusHistory = [{
-      status: jobData.status || JOB_STATUS.ASSIGNED,
-      changedAt: now.toISOString(),
+      status: data.status || JOB_STATUS.ASSIGNED,
+      changedAt: new Date().toISOString(),
       notes: 'Job created',
     }];
 
-    const job = await repo.save({
-      jobNumber,
-      clientTag: jobData.clientTag,
-      order: jobData.order,
-      orderItems: jobData.orderItems ? JSON.stringify(jobData.orderItems) : '[]',
-      user: jobData.user,
-      tailor: jobData.tailor,
-      assignedBy: jobData.assignedBy,
-      assignmentType: jobData.assignmentType || 'manual',
-      measurements: jobData.measurements ? JSON.stringify(jobData.measurements) : null,
-      stylistInstructions: jobData.stylistInstructions,
-      materialsRequired: jobData.materialsRequired ? JSON.stringify(jobData.materialsRequired) : '[]',
-      materialsIssued: jobData.materialsIssued || false,
-      materialsReceivedAt: jobData.materialsReceivedAt,
-      materialsReceivedBy: jobData.materialsReceivedBy,
-      dueDate: jobData.dueDate,
-      startedAt: jobData.startedAt,
-      completedAt: jobData.completedAt,
-      status: jobData.status || JOB_STATUS.ASSIGNED,
-      statusHistory: JSON.stringify(initialStatusHistory),
-      completionProof: jobData.completionProof ? JSON.stringify(jobData.completionProof) : null,
-      qcReview: jobData.qcReview,
-      commission: jobData.commission || 0,
-      payout: jobData.payout,
-      isPaid: jobData.isPaid || false,
-      reassignments: jobData.reassignments ? JSON.stringify(jobData.reassignments) : '[]',
-      isFlagged: jobData.isFlagged || false,
-      flagReason: jobData.flagReason,
-      flaggedBy: jobData.flaggedBy,
-      resolvedAt: jobData.resolvedAt,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return job;
+    const { rows } = await query(
+      `INSERT INTO jobs
+         (job_number, client_tag, order_id, order_item_ids, user_id, tailor_id, assigned_by,
+          assignment_type, measurements, stylist_instructions, materials_required, materials_issued,
+          materials_received_at, materials_received_by, due_date, started_at, completed_at,
+          status, status_history, completion_proof, qc_review_id, commission, payout_id, is_paid,
+          reassignments, is_flagged, flag_reason, flagged_by, resolved_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29)
+       RETURNING *`,
+      [
+        jobNumber,
+        data.clientTag || null,
+        data.order || data.orderId || null,
+        data.orderItems || [],
+        data.user || data.userId || null,
+        data.tailor || data.tailorId || null,
+        data.assignedBy || null,
+        data.assignmentType || 'manual',
+        data.measurements || null,
+        data.stylistInstructions || null,
+        data.materialsRequired || [],
+        data.materialsIssued || false,
+        data.materialsReceivedAt || null,
+        data.materialsReceivedBy || null,
+        data.dueDate || null,
+        data.startedAt || null,
+        data.completedAt || null,
+        data.status || JOB_STATUS.ASSIGNED,
+        initialStatusHistory,
+        data.completionProof || null,
+        data.qcReview || data.qcReviewId || null,
+        data.commission || 0,
+        data.payout || data.payoutId || null,
+        data.isPaid || false,
+        data.reassignments || [],
+        data.isFlagged || false,
+        data.flagReason || null,
+        data.flaggedBy || null,
+        data.resolvedAt || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find job by ID
-   */
   async findById(id) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-    return job;
+    const { rows } = await query('SELECT * FROM jobs WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find job by job number
-   */
   async findByJobNumber(jobNumber) {
-    const repo = await getJobRepository();
-    return repo.search()
-      .where('jobNumber').equals(jobNumber)
-      .return.first();
+    const { rows } = await query('SELECT * FROM jobs WHERE job_number=$1', [jobNumber]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find job by client tag
-   */
   async findByClientTag(clientTag) {
-    const repo = await getJobRepository();
-    return repo.search()
-      .where('clientTag').equals(clientTag)
-      .return.first();
+    const { rows } = await query('SELECT * FROM jobs WHERE client_tag=$1', [clientTag]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update job by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    const jsonFields = ['orderItems', 'measurements', 'materialsRequired', 'statusHistory', 'completionProof', 'reassignments'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      clientTag:           'client_tag',
+      tailor:              'tailor_id',
+      tailorId:            'tailor_id',
+      assignedBy:          'assigned_by',
+      assignmentType:      'assignment_type',
+      measurements:        'measurements',
+      stylistInstructions: 'stylist_instructions',
+      materialsRequired:   'materials_required',
+      materialsIssued:     'materials_issued',
+      materialsReceivedAt: 'materials_received_at',
+      materialsReceivedBy: 'materials_received_by',
+      dueDate:             'due_date',
+      startedAt:           'started_at',
+      completedAt:         'completed_at',
+      status:              'status',
+      statusHistory:       'status_history',
+      completionProof:     'completion_proof',
+      qcReview:            'qc_review_id',
+      commission:          'commission',
+      payout:              'payout_id',
+      isPaid:              'is_paid',
+      reassignments:       'reassignments',
+      isFlagged:           'is_flagged',
+      flagReason:          'flag_reason',
+      flaggedBy:           'flagged_by',
+      resolvedAt:          'resolved_at',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    Object.assign(job, updateData, { updatedAt: new Date() });
-    await repo.save(job);
-
-    return options.new !== false ? job : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE jobs SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update job status
-   */
   async updateStatus(id, newStatus, notes) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    job.status = newStatus;
-    const statusHistory = job.statusHistoryParsed;
-    statusHistory.push({
-      status: newStatus,
-      changedAt: new Date().toISOString(),
-      notes,
-    });
-    job.statusHistory = JSON.stringify(statusHistory);
-
-    if (newStatus === JOB_STATUS.IN_PROGRESS && !job.startedAt) {
-      job.startedAt = new Date();
-    }
-    if (newStatus === JOB_STATUS.COMPLETED) {
-      job.completedAt = new Date();
-    }
-
-    job.updatedAt = new Date();
-    await repo.save(job);
-
-    return job;
+    const job = await this.findById(id);
+    if (!job) return null;
+    const statusHistory = [...(job.statusHistory || []), {
+      status: newStatus, changedAt: new Date().toISOString(), notes,
+    }];
+    const updates = { status: newStatus, statusHistory };
+    if (newStatus === JOB_STATUS.IN_PROGRESS && !job.startedAt) updates.startedAt = new Date();
+    if (newStatus === JOB_STATUS.COMPLETED) updates.completedAt = new Date();
+    return this.findByIdAndUpdate(id, updates);
   },
 
-  /**
-   * Acknowledge material receipt
-   */
   async acknowledgeMaterialReceipt(id, tailorId) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    job.materialsReceivedAt = new Date();
-    job.materialsReceivedBy = tailorId;
-    job.status = JOB_STATUS.IN_PROGRESS;
-
-    const statusHistory = job.statusHistoryParsed;
-    statusHistory.push({
+    const job = await this.findById(id);
+    if (!job) return null;
+    const statusHistory = [...(job.statusHistory || []), {
+      status: JOB_STATUS.IN_PROGRESS, changedAt: new Date().toISOString(), notes: 'Materials received',
+    }];
+    return this.findByIdAndUpdate(id, {
+      materialsReceivedAt: new Date(),
+      materialsReceivedBy: tailorId,
       status: JOB_STATUS.IN_PROGRESS,
-      changedAt: new Date().toISOString(),
-      notes: 'Materials received',
+      statusHistory,
+      startedAt: job.startedAt || new Date(),
     });
-    job.statusHistory = JSON.stringify(statusHistory);
-
-    if (!job.startedAt) {
-      job.startedAt = new Date();
-    }
-    job.updatedAt = new Date();
-    await repo.save(job);
-
-    return job;
   },
 
-  /**
-   * Submit completion proof
-   */
   async submitCompletionProof(id, proofData) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    job.completionProof = JSON.stringify({
+    const job = await this.findById(id);
+    if (!job) return null;
+    const proof = {
       ...proofData,
-      groupPhoto: {
-        ...proofData.groupPhoto,
-        uploadedAt: new Date().toISOString(),
-      },
-    });
-    job.status = JOB_STATUS.COMPLETED;
-    job.completedAt = new Date();
-
-    const statusHistory = job.statusHistoryParsed;
-    statusHistory.push({
+      groupPhoto: { ...proofData.groupPhoto, uploadedAt: new Date().toISOString() },
+    };
+    const statusHistory = [...(job.statusHistory || []), {
+      status: JOB_STATUS.COMPLETED, changedAt: new Date().toISOString(), notes: 'Completion proof submitted',
+    }];
+    return this.findByIdAndUpdate(id, {
+      completionProof: proof,
       status: JOB_STATUS.COMPLETED,
-      changedAt: new Date().toISOString(),
-      notes: 'Completion proof submitted',
+      completedAt: new Date(),
+      statusHistory,
     });
-    job.statusHistory = JSON.stringify(statusHistory);
-    job.updatedAt = new Date();
-
-    await repo.save(job);
-    return job;
   },
 
-  /**
-   * Reassign job
-   */
   async reassign(id, newTailorId, reason, reassignedBy) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    const reassignments = job.reassignmentsParsed;
-    reassignments.push({
-      fromTailor: job.tailor,
-      toTailor: newTailorId,
-      reason,
-      reassignedBy,
+    const job = await this.findById(id);
+    if (!job) return null;
+    const reassignments = [...(job.reassignments || []), {
+      fromTailor: job.tailor, toTailor: newTailorId, reason, reassignedBy,
       reassignedAt: new Date().toISOString(),
-    });
-
-    job.reassignments = JSON.stringify(reassignments);
-    job.tailor = newTailorId;
-    job.assignmentType = 'reassigned';
-    job.updatedAt = new Date();
-
-    await repo.save(job);
-    return job;
+    }];
+    return this.findByIdAndUpdate(id, { tailor: newTailorId, assignmentType: 'reassigned', reassignments });
   },
 
-  /**
-   * Flag job
-   */
   async flag(id, reason, flaggedBy) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    job.isFlagged = true;
-    job.flagReason = reason;
-    job.flaggedBy = flaggedBy;
-    job.updatedAt = new Date();
-
-    await repo.save(job);
-    return job;
+    return this.findByIdAndUpdate(id, { isFlagged: true, flagReason: reason, flaggedBy });
   },
 
-  /**
-   * Resolve flag
-   */
   async resolveFlag(id) {
-    const repo = await getJobRepository();
-    const job = await repo.fetch(id);
-    if (!job || !job.jobNumber) return null;
-
-    job.isFlagged = false;
-    job.resolvedAt = new Date();
-    job.updatedAt = new Date();
-
-    await repo.save(job);
-    return job;
+    return this.findByIdAndUpdate(id, { isFlagged: false, resolvedAt: new Date() });
   },
 
-  /**
-   * Find jobs by tailor
-   */
   async findByTailor(tailorId, status = null) {
-    const repo = await getJobRepository();
-    let search = repo.search().where('tailor').equals(tailorId);
     if (status) {
-      search = search.where('status').equals(status);
+      const { rows } = await query(
+        'SELECT * FROM jobs WHERE tailor_id=$1 AND status=$2 ORDER BY due_date ASC', [tailorId, status]
+      );
+      return rows.map(format);
     }
-    return search.sortBy('dueDate', 'ASC').return.all();
+    const { rows } = await query(
+      'SELECT * FROM jobs WHERE tailor_id=$1 ORDER BY due_date ASC', [tailorId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find overdue jobs
-   */
-  async findOverdue() {
-    const repo = await getJobRepository();
-    const jobs = await repo.search().return.all();
-    const completedStatuses = [JOB_STATUS.COMPLETED, JOB_STATUS.QC_APPROVED, JOB_STATUS.QC_REJECTED];
-
-    return jobs.filter(job => {
-      if (!job.dueDate || completedStatuses.includes(job.status)) return false;
-      return new Date() > new Date(job.dueDate);
-    });
-  },
-
-  /**
-   * Find jobs awaiting QC
-   */
-  async findAwaitingQC() {
-    const repo = await getJobRepository();
-    return repo.search()
-      .where('status').equals(JOB_STATUS.UNDER_QC)
-      .return.all();
-  },
-
-  /**
-   * Find unpaid completed jobs
-   */
-  async findUnpaidCompleted() {
-    const repo = await getJobRepository();
-    return repo.search()
-      .where('status').equals(JOB_STATUS.QC_APPROVED)
-      .where('isPaid').equals(false)
-      .return.all();
-  },
-
-  /**
-   * Find jobs by order
-   */
   async findByOrder(orderId) {
-    const repo = await getJobRepository();
-    return repo.search()
-      .where('order').equals(orderId)
-      .return.all();
+    const { rows } = await query('SELECT * FROM jobs WHERE order_id=$1', [orderId]);
+    return rows.map(format);
   },
 
-  /**
-   * Find all jobs with filters
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getJobRepository();
-    let search = repo.search();
-
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-    if (query.order) {
-      search = search.where('order').equals(query.order);
-    }
-    if (query.isPaid !== undefined) {
-      search = search.where('isPaid').equals(query.isPaid);
-    }
-
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    return search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
+  async findOverdue() {
+    const { rows } = await query(
+      `SELECT * FROM jobs WHERE due_date < NOW()
+       AND status NOT IN ('completed','qc_approved','qc_rejected')`
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count jobs
-   */
-  async countDocuments(query = {}) {
-    const repo = await getJobRepository();
-    let search = repo.search();
-
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    return search.return.count();
+  async findAwaitingQC() {
+    const { rows } = await query(`SELECT * FROM jobs WHERE status='under_qc'`);
+    return rows.map(format);
   },
 
-  /**
-   * Delete job
-   */
+  async findUnpaidCompleted() {
+    const { rows } = await query(`SELECT * FROM jobs WHERE status='qc_approved' AND is_paid=FALSE`);
+    return rows.map(format);
+  },
+
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.tailor)               { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.status)               { conds.push(`status=$${i++}`);    vals.push(filters.status); }
+    if (filters.order)                { conds.push(`order_id=$${i++}`);  vals.push(filters.order); }
+    if (filters.isPaid !== undefined) { conds.push(`is_paid=$${i++}`);   vals.push(filters.isPaid); }
+    const { rows } = await query(
+      `SELECT * FROM jobs WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
+  },
+
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.tailor) { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.status) { conds.push(`status=$${i++}`);    vals.push(filters.status); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM jobs WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
+  },
+
   async delete(id) {
-    const repo = await getJobRepository();
-    await repo.remove(id);
+    await query('DELETE FROM jobs WHERE id=$1', [id]);
   },
 };
 

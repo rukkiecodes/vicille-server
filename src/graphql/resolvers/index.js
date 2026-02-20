@@ -8,6 +8,7 @@ import subscriptionResolvers from './subscription.resolvers.js';
 import jobResolvers from './job.resolvers.js';
 import paymentResolvers from './payment.resolvers.js';
 import adminResolvers from './admin.resolvers.js';
+import styleResolvers from './style.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -20,6 +21,7 @@ const resolvers = [
   jobResolvers,
   paymentResolvers,
   adminResolvers,
+  styleResolvers,
 ];
 
 export default resolvers;

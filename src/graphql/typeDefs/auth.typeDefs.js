@@ -15,28 +15,36 @@ const authTypeDefs = gql`
     refreshToken: String!
   }
 
+  type MessageResult {
+    success: Boolean!
+    message: String!
+  }
+
+  type TailorForgotPasswordResult {
+    success: Boolean!
+    message: String!
+    resetToken: String!
+  }
+
   extend type Mutation {
-    # User auth (activation code based)
-    requestActivationCode(email: String!, fullName: String, phone: String): RequestCodeResult!
-    verifyActivationCode(email: String!, code: String!): AuthPayload!
+    # Client auth — invite-only, passcode based
+    clientLogin(email: String!, passcode: String!): AuthPayload!
+    clientForgotPasscode(email: String!): MessageResult!
 
-    # Tailor auth (password based)
+    # Tailor auth — self-signup, email/password
+    tailorSignup(input: TailorSignupInput!): AuthPayload!
     tailorLogin(email: String!, password: String!): AuthPayload!
-    tailorRegister(input: TailorRegisterInput!): AuthPayload!
+    tailorForgotPassword(email: String!): TailorForgotPasswordResult!
+    tailorResetPassword(token: String!, newPassword: String!): Boolean!
 
-    # Admin auth (password based)
+    # Admin auth — email/password
     adminLogin(email: String!, password: String!): AuthPayload!
 
     # Token refresh
     refreshToken(refreshToken: String!): RefreshPayload!
   }
 
-  type RequestCodeResult {
-    success: Boolean!
-    message: String!
-  }
-
-  input TailorRegisterInput {
+  input TailorSignupInput {
     fullName: String!
     email: String!
     phone: String!

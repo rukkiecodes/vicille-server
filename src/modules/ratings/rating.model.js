@@ -1,223 +1,169 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 
-// Rating Entity class
-class Model {
-  // Check if rating is positive
-  get isPositive() {
-    return this.overallRating >= 4;
-  }
-
-  // Convert to safe JSON
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      tailor: this.tailor,
-      job: this.job,
-      qcReview: this.qcReview,
-      ratedBy: this.ratedBy,
-      craftsmanship: this.craftsmanship,
-      accuracy: this.accuracy,
-      timeliness: this.timeliness,
-      communication: this.communication,
-      overallRating: this.overallRating,
-      comments: this.comments,
-      internalNotes: this.internalNotes,
-      impactsPerformance: this.impactsPerformance,
-      ratedAt: this.ratedAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isPositive: this.isPositive,
-    };
-  }
+function calcOverall(craftsmanship, accuracy, timeliness, communication) {
+  return (craftsmanship + accuracy + timeliness + communication) / 4;
 }
 
-// Rating Schema for Redis OM
-// Schema definition removed
-// Repository holder
-/**
- * Calculate overall rating from individual ratings
- */
-const calculateOverallRating = (craftsmanship, accuracy, timeliness, communication) => {
-  return (craftsmanship + accuracy + timeliness + communication) / 4;
-};
+function format(row) {
+  if (!row) return null;
+  const r = {
+    id:                  row.id,
+    entityId:            row.id,
+    tailor:              row.tailor_id,
+    tailorId:            row.tailor_id,
+    job:                 row.job_id,
+    jobId:               row.job_id,
+    qcReview:            row.qc_review_id,
+    ratedBy:             row.rated_by,
+    craftsmanship:       row.craftsmanship,
+    accuracy:            row.accuracy,
+    timeliness:          row.timeliness,
+    communication:       row.communication,
+    overallRating:       row.overall_rating,
+    comments:            row.comments,
+    internalNotes:       row.internal_notes,
+    impactsPerformance:  row.impacts_performance,
+    ratedAt:             row.rated_at,
+    createdAt:           row.created_at,
+    updatedAt:           row.updated_at,
+  };
 
-// Static methods
+  Object.defineProperty(r, 'isPositive', { get() { return this.overallRating >= 4; }});
+
+  r.toSafeJSON = () => ({ ...r, isPositive: r.isPositive });
+
+  return r;
+}
+
 const RatingModel = {
-  /**
-   * Create a new rating
-   */
-  async create(ratingData) {
-    const repo = await getRatingRepository();
-
-    const now = new Date();
-
-    // Calculate overall rating
-    const overallRating = calculateOverallRating(
-      ratingData.craftsmanship,
-      ratingData.accuracy,
-      ratingData.timeliness,
-      ratingData.communication
+  async create(data) {
+    const overallRating = data.overallRating || calcOverall(
+      data.craftsmanship, data.accuracy, data.timeliness, data.communication
     );
-
-    const rating = await repo.save({
-      tailor: ratingData.tailor,
-      job: ratingData.job,
-      qcReview: ratingData.qcReview,
-      ratedBy: ratingData.ratedBy,
-      craftsmanship: ratingData.craftsmanship,
-      accuracy: ratingData.accuracy,
-      timeliness: ratingData.timeliness,
-      communication: ratingData.communication,
-      overallRating: ratingData.overallRating || overallRating,
-      comments: ratingData.comments,
-      internalNotes: ratingData.internalNotes,
-      impactsPerformance: ratingData.impactsPerformance !== false,
-      ratedAt: ratingData.ratedAt || now,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return rating;
+    const { rows } = await query(
+      `INSERT INTO ratings
+         (tailor_id, job_id, qc_review_id, rated_by, craftsmanship, accuracy, timeliness,
+          communication, overall_rating, comments, internal_notes, impacts_performance, rated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+      [
+        data.tailor || data.tailorId,
+        data.job || data.jobId,
+        data.qcReview || data.qcReviewId || null,
+        data.ratedBy,
+        data.craftsmanship,
+        data.accuracy,
+        data.timeliness,
+        data.communication,
+        overallRating,
+        data.comments || null,
+        data.internalNotes || null,
+        data.impactsPerformance !== false,
+        data.ratedAt || new Date(),
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find rating by ID
-   */
   async findById(id) {
-    const repo = await getRatingRepository();
-    const rating = await repo.fetch(id);
-    if (!rating || !rating.tailor) return null;
-    return rating;
+    const { rows } = await query('SELECT * FROM ratings WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find ratings by tailor
-   */
   async findByTailor(tailorId) {
-    const repo = await getRatingRepository();
-    return repo.search()
-      .where('tailor').equals(tailorId)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM ratings WHERE tailor_id=$1 ORDER BY created_at DESC', [tailorId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Calculate tailor average ratings
-   */
   async calculateTailorAverage(tailorId) {
-    const repo = await getRatingRepository();
-    const ratings = await repo.search()
-      .where('tailor').equals(tailorId)
-      .return.all();
-
-    // Filter for ratings that impact performance
-    const performanceRatings = ratings.filter(r => r.impactsPerformance);
-
-    if (performanceRatings.length === 0) {
-      return {
-        avgOverall: 0,
-        avgCraftsmanship: 0,
-        avgAccuracy: 0,
-        avgTimeliness: 0,
-        avgCommunication: 0,
-        count: 0,
-      };
-    }
-
-    const totals = performanceRatings.reduce(
-      (acc, r) => {
-        acc.overall += r.overallRating || 0;
-        acc.craftsmanship += r.craftsmanship || 0;
-        acc.accuracy += r.accuracy || 0;
-        acc.timeliness += r.timeliness || 0;
-        acc.communication += r.communication || 0;
-        return acc;
-      },
-      { overall: 0, craftsmanship: 0, accuracy: 0, timeliness: 0, communication: 0 }
+    const { rows } = await query(
+      `SELECT
+         COUNT(*) AS cnt,
+         AVG(overall_rating)   AS avg_overall,
+         AVG(craftsmanship)    AS avg_craftsmanship,
+         AVG(accuracy)         AS avg_accuracy,
+         AVG(timeliness)       AS avg_timeliness,
+         AVG(communication)    AS avg_communication
+       FROM ratings WHERE tailor_id=$1 AND impacts_performance=TRUE`,
+      [tailorId]
     );
-
-    const count = performanceRatings.length;
+    const r = rows[0];
     return {
-      avgOverall: totals.overall / count,
-      avgCraftsmanship: totals.craftsmanship / count,
-      avgAccuracy: totals.accuracy / count,
-      avgTimeliness: totals.timeliness / count,
-      avgCommunication: totals.communication / count,
-      count,
+      avgOverall:       parseFloat(r.avg_overall   || 0),
+      avgCraftsmanship: parseFloat(r.avg_craftsmanship || 0),
+      avgAccuracy:      parseFloat(r.avg_accuracy   || 0),
+      avgTimeliness:    parseFloat(r.avg_timeliness  || 0),
+      avgCommunication: parseFloat(r.avg_communication || 0),
+      count:            parseInt(r.cnt, 10),
     };
   },
 
-  /**
-   * Update rating by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getRatingRepository();
-    const rating = await repo.fetch(id);
-    if (!rating || !rating.tailor) return null;
-
-    // Recalculate overall rating if individual ratings changed
-    const craftsmanship = updateData.craftsmanship ?? rating.craftsmanship;
-    const accuracy = updateData.accuracy ?? rating.accuracy;
-    const timeliness = updateData.timeliness ?? rating.timeliness;
-    const communication = updateData.communication ?? rating.communication;
-
-    if (updateData.craftsmanship !== undefined || updateData.accuracy !== undefined ||
-        updateData.timeliness !== undefined || updateData.communication !== undefined) {
-      updateData.overallRating = calculateOverallRating(craftsmanship, accuracy, timeliness, communication);
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      craftsmanship:      'craftsmanship',
+      accuracy:           'accuracy',
+      timeliness:         'timeliness',
+      communication:      'communication',
+      overallRating:      'overall_rating',
+      comments:           'comments',
+      internalNotes:      'internal_notes',
+      impactsPerformance: 'impacts_performance',
+    };
+    // Recalculate overall if sub-ratings change
+    if ((updates.craftsmanship !== undefined || updates.accuracy !== undefined ||
+         updates.timeliness !== undefined || updates.communication !== undefined) &&
+        !('overallRating' in updates)) {
+      const existing = await this.findById(id);
+      if (existing) {
+        updates.overallRating = calcOverall(
+          updates.craftsmanship  ?? existing.craftsmanship,
+          updates.accuracy       ?? existing.accuracy,
+          updates.timeliness     ?? existing.timeliness,
+          updates.communication  ?? existing.communication,
+        );
+      }
     }
-
-    Object.assign(rating, updateData, { updatedAt: new Date() });
-    await repo.save(rating);
-
-    return options.new !== false ? rating : null;
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+    }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE ratings SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find ratings with filters
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getRatingRepository();
-    let search = repo.search();
-
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.ratedBy) {
-      search = search.where('ratedBy').equals(query.ratedBy);
-    }
-
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    return search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.tailor)  { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.ratedBy) { conds.push(`rated_by=$${i++}`);  vals.push(filters.ratedBy); }
+    const { rows } = await query(
+      `SELECT * FROM ratings WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count ratings
-   */
-  async countDocuments(query = {}) {
-    const repo = await getRatingRepository();
-    let search = repo.search();
-
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.ratedBy) {
-      search = search.where('ratedBy').equals(query.ratedBy);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.tailor)  { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.ratedBy) { conds.push(`rated_by=$${i++}`);  vals.push(filters.ratedBy); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM ratings WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete rating
-   */
   async delete(id) {
-    const repo = await getRatingRepository();
-    await repo.remove(id);
+    await query('DELETE FROM ratings WHERE id=$1', [id]);
   },
 };
 

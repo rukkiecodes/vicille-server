@@ -9,6 +9,7 @@ import subscriptionTypeDefs from './subscription.typeDefs.js';
 import jobTypeDefs from './job.typeDefs.js';
 import paymentTypeDefs from './payment.typeDefs.js';
 import adminTypeDefs from './admin.typeDefs.js';
+import styleTypeDefs from './style.typeDefs.js';
 
 // Base type definitions with root Query and Mutation types
 const baseTypeDefs = gql`
@@ -33,6 +34,7 @@ const typeDefs = [
   jobTypeDefs,
   paymentTypeDefs,
   adminTypeDefs,
+  styleTypeDefs,
 ];
 
 export default typeDefs;

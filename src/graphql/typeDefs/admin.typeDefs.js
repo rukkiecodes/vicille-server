@@ -27,10 +27,23 @@ const adminTypeDefs = gql`
     dashboardStats: DashboardStats!
   }
 
+  type CreateClientResult {
+    success: Boolean!
+    message: String!
+    user: User!
+    passcode: String!
+  }
+
   extend type Mutation {
+    # Admin account management
     createAdmin(input: CreateAdminInput!): Admin!
     updateAdmin(id: ID!, input: UpdateAdminInput!): Admin!
     deleteAdmin(id: ID!): DeleteResult!
+
+    # Client invitation (admin-only; passcode returned for record-keeping)
+    createClientAccount(email: String!, fullName: String!, phone: String): CreateClientResult!
+
+    # User account management
     suspendUser(userId: ID!, reason: String!): User!
     reactivateUser(userId: ID!): User!
   }

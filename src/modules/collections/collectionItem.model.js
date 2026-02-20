@@ -1,228 +1,160 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { generateSku } from '../../core/utils/randomCode.js';
 
-// CollectionItem Entity class
-class Model {
-  // Get parsed images array
-  get imagesParsed() {
-    return this.images ? JSON.parse(this.images) : [];
-  }
+function format(row) {
+  if (!row) return null;
+  const item = {
+    id:             row.id,
+    entityId:       row.id,
+    collection:     row.collection_id,
+    collectionId:   row.collection_id,
+    name:           row.name,
+    sku:            row.sku,
+    category:       row.category,
+    subcategory:    row.subcategory,
+    description:    row.description,
+    images:         row.images || [],
+    style:          row.style_id,
+    tags:           row.tags || [],
+    colors:         row.colors || [],
+    availableSizes: row.available_sizes || [],
+    fabricOptions:  row.fabric_options || [],
+    complexityLevel:row.complexity_level,
+    estimatedHours: row.estimated_hours,
+    isActive:       row.is_active,
+    displayOrder:   row.display_order,
+    createdAt:      row.created_at,
+    updatedAt:      row.updated_at,
+  };
 
-  // Get parsed fabric options array
-  get fabricOptionsParsed() {
-    return this.fabricOptions ? JSON.parse(this.fabricOptions) : [];
-  }
+  Object.defineProperty(item, 'primaryImage', { get() {
+    if (!this.images?.length) return null;
+    return this.images.find(img => img.isPrimary) || this.images[0];
+  }});
 
-  // Get parsed tags array
-  get tagsParsed() {
-    return this.tags ? JSON.parse(this.tags) : [];
-  }
+  item.toSafeJSON = () => ({ ...item, primaryImage: item.primaryImage });
 
-  // Get parsed colors array
-  get colorsParsed() {
-    return this.colors ? JSON.parse(this.colors) : [];
-  }
-
-  // Get parsed available sizes array
-  get availableSizesParsed() {
-    return this.availableSizes ? JSON.parse(this.availableSizes) : [];
-  }
-
-  // Get primary image
-  get primaryImage() {
-    const images = this.imagesParsed;
-    if (!images || images.length === 0) return null;
-    return images.find((img) => img.isPrimary) || images[0];
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      collection: this.collection,
-      name: this.name,
-      sku: this.sku,
-      category: this.category,
-      subcategory: this.subcategory,
-      description: this.description,
-      images: this.imagesParsed,
-      style: this.style,
-      tags: this.tagsParsed,
-      colors: this.colorsParsed,
-      availableSizes: this.availableSizesParsed,
-      fabricOptions: this.fabricOptionsParsed,
-      complexityLevel: this.complexityLevel,
-      estimatedHours: this.estimatedHours,
-      isActive: this.isActive,
-      displayOrder: this.displayOrder,
-      primaryImage: this.primaryImage,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-    };
-  }
+  return item;
 }
 
-// CollectionItem Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const CollectionItemModel = {
-  /**
-   * Create a new collection item
-   */
-  async create(itemData) {
-    const repo = await getCollectionItemRepository();
-
-    const now = new Date();
-    const sku = itemData.sku || generateSku();
-
-    const item = await repo.save({
-      collection: itemData.collection,
-      name: itemData.name,
-      sku,
-      category: itemData.category,
-      subcategory: itemData.subcategory,
-      description: itemData.description,
-      images: itemData.images ? JSON.stringify(itemData.images) : '[]',
-      style: itemData.style,
-      tags: itemData.tags ? JSON.stringify(itemData.tags) : '[]',
-      colors: itemData.colors ? JSON.stringify(itemData.colors) : '[]',
-      availableSizes: itemData.availableSizes ? JSON.stringify(itemData.availableSizes) : '[]',
-      fabricOptions: itemData.fabricOptions ? JSON.stringify(itemData.fabricOptions) : '[]',
-      complexityLevel: itemData.complexityLevel || 'moderate',
-      estimatedHours: itemData.estimatedHours,
-      isActive: itemData.isActive !== undefined ? itemData.isActive : true,
-      displayOrder: itemData.displayOrder || 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return item;
+  async create(data) {
+    const sku = data.sku || generateSku();
+    const { rows } = await query(
+      `INSERT INTO collection_items
+         (collection_id, name, sku, category, subcategory, description, images, style_id,
+          tags, colors, available_sizes, fabric_options, complexity_level, estimated_hours,
+          is_active, display_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16) RETURNING *`,
+      [
+        data.collection || data.collectionId,
+        data.name,
+        sku,
+        data.category || null,
+        data.subcategory || null,
+        data.description || null,
+        data.images || [],
+        data.style || data.styleId || null,
+        data.tags || [],
+        data.colors || [],
+        data.availableSizes || [],
+        data.fabricOptions || [],
+        data.complexityLevel || 'moderate',
+        data.estimatedHours || null,
+        data.isActive !== false,
+        data.displayOrder || 0,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find collection item by ID
-   */
   async findById(id) {
-    const repo = await getCollectionItemRepository();
-    const item = await repo.fetch(id);
-    if (!item || !item.name) return null;
-    return item;
+    const { rows } = await query('SELECT * FROM collection_items WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find collection item by SKU
-   */
   async findBySku(sku) {
-    const repo = await getCollectionItemRepository();
-    return repo.search()
-      .where('sku').equals(sku)
-      .return.first();
+    const { rows } = await query('SELECT * FROM collection_items WHERE sku=$1', [sku]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update collection item by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getCollectionItemRepository();
-    const item = await repo.fetch(id);
-    if (!item || !item.name) return null;
-
-    // Serialize complex objects
-    const jsonFields = ['images', 'tags', 'colors', 'availableSizes', 'fabricOptions'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      name:            'name',
+      category:        'category',
+      subcategory:     'subcategory',
+      description:     'description',
+      images:          'images',
+      style:           'style_id',
+      tags:            'tags',
+      colors:          'colors',
+      availableSizes:  'available_sizes',
+      fabricOptions:   'fabric_options',
+      complexityLevel: 'complexity_level',
+      estimatedHours:  'estimated_hours',
+      isActive:        'is_active',
+      displayOrder:    'display_order',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    // Update fields
-    Object.assign(item, updateData, { updatedAt: new Date() });
-    await repo.save(item);
-
-    return options.new !== false ? item : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE collection_items SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find items by collection
-   */
   async findByCollection(collectionId) {
-    const repo = await getCollectionItemRepository();
-    return repo.search()
-      .where('collection').equals(collectionId)
-      .where('isActive').equals(true)
-      .sortBy('displayOrder', 'ASC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM collection_items WHERE collection_id=$1 AND is_active=TRUE ORDER BY display_order ASC',
+      [collectionId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find items by category
-   */
   async findByCategory(category) {
-    const repo = await getCollectionItemRepository();
-    return repo.search()
-      .where('category').equals(category)
-      .where('isActive').equals(true)
-      .sortBy('displayOrder', 'ASC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM collection_items WHERE category=$1 AND is_active=TRUE ORDER BY display_order ASC',
+      [category]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find all collection items with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getCollectionItemRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.collection) {
-      search = search.where('collection').equals(query.collection);
-    }
-    if (query.category) {
-      search = search.where('category').equals(query.category);
-    }
-    if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const items = await search
-      .sortBy('displayOrder', 'ASC')
-      .return.page(offset, limit);
-
-    return items;
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.collection)             { conds.push(`collection_id=$${i++}`); vals.push(filters.collection); }
+    if (filters.category)               { conds.push(`category=$${i++}`);       vals.push(filters.category); }
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`);      vals.push(filters.isActive); }
+    const { rows } = await query(
+      `SELECT * FROM collection_items WHERE ${conds.join(' AND ')} ORDER BY display_order ASC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count collection items
-   */
-  async countDocuments(query = {}) {
-    const repo = await getCollectionItemRepository();
-    let search = repo.search();
-
-    if (query.collection) {
-      search = search.where('collection').equals(query.collection);
-    }
-    if (query.category) {
-      search = search.where('category').equals(query.category);
-    }
-    if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.collection)             { conds.push(`collection_id=$${i++}`); vals.push(filters.collection); }
+    if (filters.category)               { conds.push(`category=$${i++}`);       vals.push(filters.category); }
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`);      vals.push(filters.isActive); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM collection_items WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete collection item (hard delete)
-   */
   async delete(id) {
-    const repo = await getCollectionItemRepository();
-    await repo.remove(id);
+    await query('DELETE FROM collection_items WHERE id=$1', [id]);
   },
 };
 

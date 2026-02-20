@@ -1,436 +1,274 @@
-import bcrypt from 'bcryptjs';
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { hashPassword, comparePassword } from '../../core/utils/crypto.js';
+import { getRedisClient } from '../../infrastructure/database/redis.js';
+import logger from '../../core/logger/index.js';
 
-// Tailor Entity class
-class Model {
-  // Get completion rate
-  get completionRate() {
-    const performance = this.performanceParsed;
-    if (!performance || performance.totalJobsAssigned === 0) return 100;
-    return Math.round((performance.totalJobsCompleted / performance.totalJobsAssigned) * 100);
-  }
+const SESSION_PREFIX = 'session:tailor:';
+const SESSION_TTL = 86400 * 7;
 
-  // Check if verified
-  get isVerified() {
-    return this.verificationStatus === 'verified';
-  }
+function format(row) {
+  if (!row) return null;
+  const t = {
+    id:                     row.id,
+    entityId:               row.id,
+    fullName:               row.full_name,
+    email:                  row.email,
+    phone:                  row.phone,
+    status:                 row.status,
+    accountStatus:          row.status,
+    verificationStatus:     row.status === 'active' ? 'verified' : row.status,
+    specialties:            row.specialties || [],
+    preferredPaymentMethod: row.preferred_payment_method,
+    bankName:               row.bank_name,
+    accountNumber:          row.account_number,
+    accountName:            row.account_name,
+    kycDocuments:           row.kyc_docs || [],
+    profilePhoto:           row.profile_photo_url,
+    // Capacity
+    capacity: {
+      preferredMaxPerDay:   row.capacity_per_day,
+      preferredMaxPerWeek:  row.capacity_per_week,
+      preferredMaxPerMonth: row.capacity_per_month,
+      isActive:             !row.is_capacity_reduced,
+    },
+    isCapacityReduced:       row.is_capacity_reduced,
+    capacityReducedUntil:    row.capacity_reduced_until,
+    capacityReductionReason: row.capacity_reduction_reason,
+    // Performance
+    performance: {
+      totalJobsCompleted:     row.total_jobs_completed,
+      totalJobsAssigned:      row.total_jobs_assigned,
+      missedDeadlines:        row.missed_deadlines,
+      onTimeDeliveryRate:     row.on_time_delivery_rate,
+      averageRating:          row.average_rating,
+      consecutiveMissCount:   row.consecutive_miss_count,
+      consecutiveOnTimeJobs:  row.consecutive_on_time_count,
+      isProbation:            row.is_on_probation,
+      probationJobsCompleted: row.probation_jobs_completed,
+    },
+    totalJobsCompleted:      row.total_jobs_completed,
+    totalJobsAssigned:       row.total_jobs_assigned,
+    missedDeadlines:         row.missed_deadlines,
+    consecutiveMissCount:    row.consecutive_miss_count,
+    consecutiveOnTimeCount:  row.consecutive_on_time_count,
+    onTimeDeliveryRate:      row.on_time_delivery_rate,
+    averageRating:           row.average_rating,
+    isOnProbation:           row.is_on_probation,
+    probationJobsCompleted:  row.probation_jobs_completed,
+    advanceEligible:         row.advance_eligible,
+    // Auth
+    passwordHash:            row.password_hash,
+    resetToken:              row.reset_token,
+    resetTokenExpiresAt:     row.reset_token_expires_at,
+    lastActiveAt:            row.last_login_at,
+    lastLoginAt:             row.last_login_at,
+    isDeleted:               row.is_deleted,
+    createdAt:               row.created_at,
+    updatedAt:               row.updated_at,
+  };
 
-  // Check if on probation
-  get isOnProbation() {
-    const performance = this.performanceParsed;
-    return performance?.isProbation || false;
-  }
+  Object.defineProperties(t, {
+    isVerified:    { get() { return this.status === 'active' || this.status === 'verified'; } },
+    completionRate:{ get() {
+      if (!this.totalJobsAssigned) return 100;
+      return Math.round((this.totalJobsCompleted / this.totalJobsAssigned) * 100);
+    }},
+    availability: { get() {
+      return { workingDays: ['monday','tuesday','wednesday','thursday','friday'], workingHours: { start:'08:00', end:'18:00' }, isAvailable: !this.isCapacityReduced };
+    }},
+  });
 
-  // Get parsed profile photo
-  get profilePhotoParsed() {
-    return this.profilePhoto ? JSON.parse(this.profilePhoto) : null;
-  }
+  t.canAcceptJobs = () => t.status === 'active' && !t.isCapacityReduced;
 
-  // Get parsed specialties
-  get specialtiesParsed() {
-    return this.specialties ? JSON.parse(this.specialties) : [];
-  }
+  t.toSafeJSON = () => {
+    const safe = { ...t };
+    delete safe.passwordHash;
+    delete safe.resetToken;
+    delete safe.resetTokenExpiresAt;
+    delete safe.toSafeJSON;
+    return safe;
+  };
 
-  // Get parsed capacity
-  get capacityParsed() {
-    return this.capacity ? JSON.parse(this.capacity) : {
-      preferredMaxPerDay: 3,
-      preferredMaxPerWeek: 15,
-      preferredMaxPerMonth: 50,
-      currentCapacity: 10,
-      isActive: true,
-    };
-  }
-
-  // Get parsed performance
-  get performanceParsed() {
-    return this.performance ? JSON.parse(this.performance) : {
-      totalJobsCompleted: 0,
-      totalJobsAssigned: 0,
-      onTimeDeliveryRate: 100,
-      averageRating: 0,
-      missedDeadlines: 0,
-      consecutiveOnTimeJobs: 0,
-      isProbation: true,
-      probationJobsCompleted: 0,
-    };
-  }
-
-  // Get parsed payment details
-  get paymentDetailsParsed() {
-    return this.paymentDetails ? JSON.parse(this.paymentDetails) : null;
-  }
-
-  // Get parsed KYC documents
-  get kycDocumentsParsed() {
-    return this.kycDocuments ? JSON.parse(this.kycDocuments) : [];
-  }
-
-  // Get parsed availability
-  get availabilityParsed() {
-    return this.availability ? JSON.parse(this.availability) : {
-      workingDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-      workingHours: { start: '08:00', end: '18:00' },
-      isAvailable: true,
-    };
-  }
-
-  // Check if can accept jobs
-  canAcceptJobs() {
-    const capacity = this.capacityParsed;
-    const availability = this.availabilityParsed;
-    return (
-      this.accountStatus === 'active' &&
-      this.verificationStatus === 'verified' &&
-      capacity.isActive &&
-      availability.isAvailable
-    );
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      fullName: this.fullName,
-      email: this.email,
-      phone: this.phone,
-      profilePhoto: this.profilePhotoParsed,
-      verificationStatus: this.verificationStatus,
-      verifiedAt: this.verifiedAt,
-      specialties: this.specialtiesParsed,
-      capacity: this.capacityParsed,
-      performance: this.performanceParsed,
-      paymentDetails: this.paymentDetailsParsed,
-      kycDocuments: this.kycDocumentsParsed,
-      availability: this.availabilityParsed,
-      accountStatus: this.accountStatus,
-      lastActiveAt: this.lastActiveAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      completionRate: this.completionRate,
-      isVerified: this.isVerified,
-      isOnProbation: this.isOnProbation,
-    };
-  }
+  return t;
 }
 
-// Tailor Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
+const colMap = {
+  fullName:               'full_name',
+  email:                  'email',
+  phone:                  'phone',
+  status:                 'status',
+  accountStatus:          'status',
+  specialties:            'specialties',
+  profilePhotoUrl:        'profile_photo_url',
+  preferredPaymentMethod: 'preferred_payment_method',
+  bankName:               'bank_name',
+  accountNumber:          'account_number',
+  accountName:            'account_name',
+  kycDocs:                'kyc_docs',
+  kycDocuments:           'kyc_docs',
+  capacityPerDay:         'capacity_per_day',
+  capacityPerWeek:        'capacity_per_week',
+  capacityPerMonth:       'capacity_per_month',
+  isCapacityReduced:      'is_capacity_reduced',
+  capacityReducedUntil:   'capacity_reduced_until',
+  capacityReductionReason:'capacity_reduction_reason',
+  totalJobsCompleted:     'total_jobs_completed',
+  totalJobsAssigned:      'total_jobs_assigned',
+  missedDeadlines:        'missed_deadlines',
+  consecutiveMissCount:   'consecutive_miss_count',
+  consecutiveOnTimeCount: 'consecutive_on_time_count',
+  onTimeDeliveryRate:     'on_time_delivery_rate',
+  averageRating:          'average_rating',
+  isOnProbation:          'is_on_probation',
+  probationJobsCompleted: 'probation_jobs_completed',
+  advanceEligible:        'advance_eligible',
+  lastLoginAt:            'last_login_at',
+  lastActiveAt:           'last_login_at',
+  resetToken:             'reset_token',
+  resetTokenExpiresAt:    'reset_token_expires_at',
+  isDeleted:              'is_deleted',
+  deletedAt:              'deleted_at',
+};
+
 const TailorModel = {
-  /**
-   * Create a new tailor
-   */
-  async create(tailorData) {
-    const repo = await getTailorRepository();
-
-    // Hash password
-    if (tailorData.password) {
-      tailorData.password = await hashPassword(tailorData.password);
-    }
-
-    const now = new Date();
-    const defaultCapacity = {
-      preferredMaxPerDay: 3,
-      preferredMaxPerWeek: 15,
-      preferredMaxPerMonth: 50,
-      currentCapacity: 10,
-      isActive: true,
-    };
-    const defaultPerformance = {
-      totalJobsCompleted: 0,
-      totalJobsAssigned: 0,
-      onTimeDeliveryRate: 100,
-      averageRating: 0,
-      missedDeadlines: 0,
-      consecutiveOnTimeJobs: 0,
-      lastPerformanceReview: null,
-      isProbation: true,
-      probationJobsCompleted: 0,
-    };
-    const defaultAvailability = {
-      workingDays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday'],
-      workingHours: { start: '08:00', end: '18:00' },
-      isAvailable: true,
-    };
-
-    const tailor = await repo.save({
-      fullName: tailorData.fullName,
-      email: tailorData.email?.toLowerCase(),
-      phone: tailorData.phone,
-      password: tailorData.password,
-      profilePhoto: tailorData.profilePhoto ? JSON.stringify(tailorData.profilePhoto) : null,
-      verificationStatus: tailorData.verificationStatus || 'pending',
-      verifiedBy: tailorData.verifiedBy,
-      verifiedAt: tailorData.verifiedAt,
-      skillTestDate: tailorData.skillTestDate,
-      skillTestScore: tailorData.skillTestScore,
-      skillTestNotes: tailorData.skillTestNotes,
-      specialties: tailorData.specialties ? JSON.stringify(tailorData.specialties) : '[]',
-      capacity: JSON.stringify(tailorData.capacity || defaultCapacity),
-      performance: JSON.stringify(tailorData.performance || defaultPerformance),
-      paymentDetails: tailorData.paymentDetails ? JSON.stringify(tailorData.paymentDetails) : null,
-      kycDocuments: tailorData.kycDocuments ? JSON.stringify(tailorData.kycDocuments) : '[]',
-      availability: JSON.stringify(tailorData.availability || defaultAvailability),
-      accountStatus: tailorData.accountStatus || 'active',
-      suspensionReason: tailorData.suspensionReason,
-      suspendedUntil: tailorData.suspendedUntil,
-      lastActiveAt: tailorData.lastActiveAt,
-      isDeleted: false,
-      deletedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return tailor;
-  },
-
-  /**
-   * Find tailor by ID
-   */
-  async findById(id, options = {}) {
-    const repo = await getTailorRepository();
-    const tailor = await repo.fetch(id);
-    if (!tailor || !tailor.email) return null;
-    if (tailor.isDeleted && !options.includeDeleted) return null;
-    return tailor;
-  },
-
-  /**
-   * Find tailor by email
-   */
-  async findByEmail(email) {
-    const repo = await getTailorRepository();
-    const tailor = await repo.search()
-      .where('email').equals(email.toLowerCase())
-      .where('isDeleted').equals(false)
-      .return.first();
-    return tailor;
-  },
-
-  /**
-   * Find tailor by email with password (for auth)
-   */
-  async findByEmailWithPassword(email) {
-    return this.findByEmail(email);
-  },
-
-  /**
-   * Find tailor by phone
-   */
-  async findByPhone(phone) {
-    const repo = await getTailorRepository();
-    const tailor = await repo.search()
-      .where('phone').equals(phone)
-      .where('isDeleted').equals(false)
-      .return.first();
-    return tailor;
-  },
-
-  /**
-   * Update tailor by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getTailorRepository();
-    const tailor = await repo.fetch(id);
-    if (!tailor || !tailor.email) return null;
-    if (tailor.isDeleted && !options.includeDeleted) return null;
-
-    // Hash password if being updated
-    if (updateData.password) {
-      updateData.password = await hashPassword(updateData.password);
-    }
-
-    // Serialize complex objects
-    const jsonFields = ['profilePhoto', 'specialties', 'capacity', 'performance', 'paymentDetails', 'kycDocuments', 'availability'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
-
-    // Update fields
-    Object.assign(tailor, updateData, { updatedAt: new Date() });
-    await repo.save(tailor);
-
-    return options.new !== false ? tailor : null;
-  },
-
-  /**
-   * Delete tailor (soft delete)
-   */
-  async findByIdAndDelete(id) {
-    const repo = await getTailorRepository();
-    const tailor = await repo.fetch(id);
-    if (!tailor || !tailor.email) return null;
-
-    tailor.isDeleted = true;
-    tailor.deletedAt = new Date();
-    tailor.updatedAt = new Date();
-    await repo.save(tailor);
-
-    return tailor;
-  },
-
-  /**
-   * Find all tailors with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getTailorRepository();
-    let search = repo.search();
-
-    // Default: exclude deleted
-    if (query.includeDeleted !== true) {
-      search = search.where('isDeleted').equals(false);
-    }
-
-    // Apply filters
-    if (query.accountStatus) {
-      search = search.where('accountStatus').equals(query.accountStatus);
-    }
-    if (query.verificationStatus) {
-      search = search.where('verificationStatus').equals(query.verificationStatus);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const tailors = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return tailors;
-  },
-
-  /**
-   * Find available tailors
-   */
-  async findAvailable() {
-    const repo = await getTailorRepository();
-    const tailors = await repo.search()
-      .where('isDeleted').equals(false)
-      .where('accountStatus').equals('active')
-      .where('verificationStatus').equals('verified')
-      .return.all();
-
-    // Filter by capacity and availability (need to parse JSON)
-    return tailors.filter(tailor => {
-      const capacity = tailor.capacityParsed;
-      const availability = tailor.availabilityParsed;
-      return capacity.isActive && availability.isAvailable;
-    });
-  },
-
-  /**
-   * Find tailors by specialty
-   */
-  async findBySpecialty(category) {
-    const repo = await getTailorRepository();
-    const tailors = await repo.search()
-      .where('isDeleted').equals(false)
-      .where('accountStatus').equals('active')
-      .where('verificationStatus').equals('verified')
-      .return.all();
-
-    // Filter by specialty (need to parse JSON)
-    return tailors.filter(tailor => {
-      const specialties = tailor.specialtiesParsed;
-      return specialties.some(s => s.category === category);
-    }).sort((a, b) => {
-      const ratingA = a.performanceParsed?.averageRating || 0;
-      const ratingB = b.performanceParsed?.averageRating || 0;
-      return ratingB - ratingA;
-    });
-  },
-
-  /**
-   * Count tailors
-   */
-  async countDocuments(query = {}) {
-    const repo = await getTailorRepository();
-    let search = repo.search();
-
-    if (query.includeDeleted !== true) {
-      search = search.where('isDeleted').equals(false);
-    }
-    if (query.accountStatus) {
-      search = search.where('accountStatus').equals(query.accountStatus);
-    }
-    if (query.verificationStatus) {
-      search = search.where('verificationStatus').equals(query.verificationStatus);
-    }
-
-    return search.return.count();
-  },
-
-  /**
-   * Compare password
-   */
-  async comparePassword(tailor, candidatePassword) {
-    if (!tailor.password) return false;
-    return comparePassword(candidatePassword, tailor.password);
-  },
-
-  /**
-   * Update performance after job completion
-   */
-  async updatePerformanceOnCompletion(tailor, wasOnTime, rating) {
-    const repo = await getTailorRepository();
-    const performance = tailor.performanceParsed;
-
-    performance.totalJobsCompleted += 1;
-
-    if (wasOnTime) {
-      performance.consecutiveOnTimeJobs += 1;
-    } else {
-      performance.missedDeadlines += 1;
-      performance.consecutiveOnTimeJobs = 0;
-    }
-
-    // Recalculate on-time delivery rate
-    const onTimeJobs = performance.totalJobsCompleted - performance.missedDeadlines;
-    performance.onTimeDeliveryRate = Math.round(
-      (onTimeJobs / performance.totalJobsCompleted) * 100
+  async create(data) {
+    const passwordHash = data.password ? await hashPassword(data.password) : null;
+    const { rows } = await query(
+      `INSERT INTO tailors (full_name,email,phone,password_hash,status,specialties)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        data.fullName,
+        data.email?.toLowerCase(),
+        data.phone || null,
+        passwordHash,
+        data.status || 'pending',
+        data.specialties || [],
+      ]
     );
+    logger.info(`Tailor created: ${rows[0].email}`);
+    return format(rows[0]);
+  },
 
-    // Update average rating if provided
-    if (rating) {
-      const totalRatings = performance.totalJobsCompleted;
-      performance.averageRating =
-        (performance.averageRating * (totalRatings - 1) + rating) / totalRatings;
+  async findById(id, options = {}) {
+    const cond = options.includeDeleted ? '' : 'AND is_deleted=FALSE';
+    const { rows } = await query(`SELECT * FROM tailors WHERE id=$1 ${cond}`, [id]);
+    return format(rows[0] || null);
+  },
+
+  async findByEmail(email) {
+    const { rows } = await query(
+      'SELECT * FROM tailors WHERE email=$1 AND is_deleted=FALSE',
+      [email.toLowerCase()]
+    );
+    return format(rows[0] || null);
+  },
+
+  async findByIdAndUpdate(id, updates, options = {}) {
+    const fields = [];
+    const values = [];
+    let i = 1;
+    if (updates.password) {
+      fields.push(`password_hash=$${i++}`);
+      values.push(await hashPassword(updates.password));
     }
-
-    // Check probation completion
-    if (performance.isProbation) {
-      performance.probationJobsCompleted += 1;
-      if (performance.probationJobsCompleted >= 5) {
-        performance.isProbation = false;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) {
+        fields.push(`${dbCol}=$${i++}`);
+        values.push(updates[jsKey]);
       }
     }
-
-    tailor.performance = JSON.stringify(performance);
-    tailor.updatedAt = new Date();
-    await repo.save(tailor);
+    if (!fields.length) return this.findById(id, options);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE tailors SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Check if email exists
-   */
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['is_deleted=FALSE'];
+    const vals = [];
+    let i = 1;
+    if (filters.status) { conds.push(`status=$${i++}`); vals.push(filters.status); }
+    if (filters.accountStatus) { conds.push(`status=$${i++}`); vals.push(filters.accountStatus); }
+    const { rows } = await query(
+      `SELECT * FROM tailors WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
+  },
+
+  async findAvailable() {
+    const { rows } = await query(
+      `SELECT * FROM tailors WHERE is_deleted=FALSE AND status='active' AND is_capacity_reduced=FALSE`, []
+    );
+    return rows.map(format);
+  },
+
+  async findBySpecialty(category) {
+    const { rows } = await query(
+      `SELECT * FROM tailors WHERE is_deleted=FALSE AND status='active' AND $1=ANY(specialties) ORDER BY on_time_delivery_rate DESC`,
+      [category]
+    );
+    return rows.map(format);
+  },
+
+  async countDocuments(filters = {}) {
+    const conds = ['is_deleted=FALSE'];
+    const vals = [];
+    let i = 1;
+    if (filters.status) { conds.push(`status=$${i++}`); vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM tailors WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
+  },
+
+  async comparePassword(tailor, candidatePassword) {
+    if (!tailor.passwordHash) return false;
+    return comparePassword(candidatePassword, tailor.passwordHash);
+  },
+
   async emailExists(email) {
-    const tailor = await this.findByEmail(email);
-    return !!tailor;
+    return !!(await this.findByEmail(email));
   },
 
-  /**
-   * Check if phone exists
-   */
-  async phoneExists(phone) {
-    const tailor = await this.findByPhone(phone);
-    return !!tailor;
+  async updatePerformanceOnCompletion(tailorId, wasOnTime, rating) {
+    const t = await this.findById(tailorId);
+    if (!t) return null;
+    const completed = t.totalJobsCompleted + 1;
+    const missed    = wasOnTime ? t.missedDeadlines : t.missedDeadlines + 1;
+    const onTimeRate = Math.round(((completed - missed) / completed) * 100);
+    let avgRating = t.averageRating;
+    if (rating) avgRating = (t.averageRating * t.totalJobsCompleted + rating) / completed;
+    let probJobs = t.probationJobsCompleted;
+    let isOnProbation = t.isOnProbation;
+    if (isOnProbation) { probJobs++; if (probJobs >= 5) isOnProbation = false; }
+    return this.findByIdAndUpdate(tailorId, {
+      totalJobsCompleted:     completed,
+      missedDeadlines:        missed,
+      consecutiveMissCount:   wasOnTime ? 0 : t.consecutiveMissCount + 1,
+      consecutiveOnTimeCount: wasOnTime ? t.consecutiveOnTimeCount + 1 : 0,
+      onTimeDeliveryRate:     onTimeRate,
+      averageRating:          avgRating,
+      isOnProbation,
+      probationJobsCompleted: probJobs,
+    });
+  },
+
+  async cacheAuthenticatedTailor(tailor) {
+    try {
+      const redis = getRedisClient();
+      await redis.set(`${SESSION_PREFIX}${tailor.id}`, JSON.stringify(tailor.toSafeJSON()), { EX: SESSION_TTL });
+    } catch { /* non-fatal */ }
+  },
+
+  async clearCachedTailor(tailorId) {
+    try {
+      const redis = getRedisClient();
+      await redis.del(`${SESSION_PREFIX}${tailorId}`);
+    } catch { /* non-fatal */ }
   },
 };
 

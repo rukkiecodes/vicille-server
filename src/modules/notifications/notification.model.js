@@ -1,316 +1,198 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
-import { NOTIFICATION_STATUS, NOTIFICATION_CHANNEL } from '../../core/constants/notificationTypes.js';
+import { query } from '../../infrastructure/database/postgres.js';
+import { NOTIFICATION_STATUS } from '../../core/constants/notificationTypes.js';
 
-// Notification Entity class
-class Model {
-  // Get parsed recipient
-  get recipientParsed() {
-    return this.recipient ? JSON.parse(this.recipient) : null;
-  }
+function format(row) {
+  if (!row) return null;
+  const n = {
+    id:             row.id,
+    entityId:       row.id,
+    recipient:      row.recipient,
+    recipientId:    row.recipient_id,
+    recipientRole:  row.recipient_role,
+    type:           row.type,
+    channel:        row.channel || [],
+    title:          row.title,
+    message:        row.message,
+    data:           row.data,
+    order:          row.order_id,
+    payment:        row.payment_id,
+    job:            row.job_id,
+    status:         row.status,
+    sentAt:         row.sent_at,
+    readAt:         row.read_at,
+    failedAt:       row.failed_at,
+    failureReason:  row.failure_reason,
+    emailDetails:   row.email_details,
+    pushDetails:    row.push_details,
+    expiresAt:      row.expires_at,
+    createdAt:      row.created_at,
+    updatedAt:      row.updated_at,
+  };
 
-  // Get parsed data
-  get dataParsed() {
-    return this.data ? JSON.parse(this.data) : null;
-  }
+  Object.defineProperties(n, {
+    isRead: { get() { return this.status === NOTIFICATION_STATUS.READ || !!this.readAt; }},
+    isSent: { get() { return this.status === NOTIFICATION_STATUS.SENT; }},
+  });
 
-  // Get parsed email details
-  get emailDetailsParsed() {
-    return this.emailDetails ? JSON.parse(this.emailDetails) : null;
-  }
+  n.toSafeJSON = () => ({ ...n, isRead: n.isRead, isSent: n.isSent });
 
-  // Get parsed push details
-  get pushDetailsParsed() {
-    return this.pushDetails ? JSON.parse(this.pushDetails) : null;
-  }
-
-  // Get parsed channel array
-  get channelParsed() {
-    return this.channel ? JSON.parse(this.channel) : [];
-  }
-
-  // Check if read
-  get isRead() {
-    return this.status === NOTIFICATION_STATUS.READ || !!this.readAt;
-  }
-
-  // Check if sent
-  get isSent() {
-    return this.status === NOTIFICATION_STATUS.SENT;
-  }
-
-  // Convert to safe JSON
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      recipient: this.recipientParsed,
-      type: this.type,
-      channel: this.channelParsed,
-      title: this.title,
-      message: this.message,
-      data: this.dataParsed,
-      order: this.order,
-      payment: this.payment,
-      job: this.job,
-      status: this.status,
-      sentAt: this.sentAt,
-      readAt: this.readAt,
-      failedAt: this.failedAt,
-      failureReason: this.failureReason,
-      emailDetails: this.emailDetailsParsed,
-      pushDetails: this.pushDetailsParsed,
-      expiresAt: this.expiresAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isRead: this.isRead,
-      isSent: this.isSent,
-    };
-  }
+  return n;
 }
 
-// Notification Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods
 const NotificationModel = {
-  /**
-   * Create a new notification
-   */
-  async create(notificationData) {
-    const repo = await getNotificationRepository();
-
-    const now = new Date();
-
-    const notification = await repo.save({
-      recipient: notificationData.recipient ? JSON.stringify(notificationData.recipient) : null,
-      recipientId: notificationData.recipient?.id || notificationData.recipientId,
-      type: notificationData.type,
-      channel: notificationData.channel ? JSON.stringify(notificationData.channel) : '[]',
-      title: notificationData.title,
-      message: notificationData.message,
-      data: notificationData.data ? JSON.stringify(notificationData.data) : null,
-      order: notificationData.order,
-      payment: notificationData.payment,
-      job: notificationData.job,
-      status: notificationData.status || NOTIFICATION_STATUS.PENDING,
-      sentAt: notificationData.sentAt,
-      readAt: notificationData.readAt,
-      failedAt: notificationData.failedAt,
-      failureReason: notificationData.failureReason,
-      emailDetails: notificationData.emailDetails ? JSON.stringify(notificationData.emailDetails) : null,
-      pushDetails: notificationData.pushDetails ? JSON.stringify(notificationData.pushDetails) : null,
-      expiresAt: notificationData.expiresAt,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return notification;
+  async create(data) {
+    const recipientId = data.recipient?.id || data.recipientId;
+    const { rows } = await query(
+      `INSERT INTO notifications
+         (recipient_id, recipient_role, recipient, type, channel, title, message, data,
+          order_id, payment_id, job_id, status, sent_at, read_at, failed_at, failure_reason,
+          email_details, push_details, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+      [
+        recipientId || null,
+        data.recipientRole || (data.recipient?.role) || null,
+        data.recipient || null,
+        data.type,
+        data.channel || [],
+        data.title,
+        data.message,
+        data.data || null,
+        data.order || null,
+        data.payment || null,
+        data.job || null,
+        data.status || NOTIFICATION_STATUS.PENDING,
+        data.sentAt || null,
+        data.readAt || null,
+        data.failedAt || null,
+        data.failureReason || null,
+        data.emailDetails || null,
+        data.pushDetails || null,
+        data.expiresAt || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find notification by ID
-   */
   async findById(id) {
-    const repo = await getNotificationRepository();
-    const notification = await repo.fetch(id);
-    if (!notification || !notification.type) return null;
-    return notification;
+    const { rows } = await query('SELECT * FROM notifications WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find notifications by recipient
-   */
   async findByRecipient(recipientId, options = {}) {
-    const repo = await getNotificationRepository();
-    let search = repo.search()
-      .where('recipientId').equals(recipientId);
-
-    if (options.unreadOnly) {
-      search = search.where('status').not.equals(NOTIFICATION_STATUS.READ);
-    }
-
     const limit = options.limit || 50;
-    return search
-      .sortBy('createdAt', 'DESC')
-      .return.page(0, limit);
+    let sql = 'SELECT * FROM notifications WHERE recipient_id=$1';
+    const vals = [recipientId];
+    if (options.unreadOnly) { sql += ` AND status<>'${NOTIFICATION_STATUS.READ}'`; }
+    sql += ' ORDER BY created_at DESC LIMIT $2';
+    vals.push(limit);
+    const { rows } = await query(sql, vals);
+    return rows.map(format);
   },
 
-  /**
-   * Count unread notifications
-   */
   async countUnread(recipientId) {
-    const repo = await getNotificationRepository();
-    const notifications = await repo.search()
-      .where('recipientId').equals(recipientId)
-      .return.all();
-
-    return notifications.filter(n =>
-      !n.readAt && n.status !== NOTIFICATION_STATUS.READ && n.status !== NOTIFICATION_STATUS.FAILED
-    ).length;
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM notifications
+       WHERE recipient_id=$1 AND read_at IS NULL
+       AND status NOT IN ('${NOTIFICATION_STATUS.READ}','${NOTIFICATION_STATUS.FAILED}')`,
+      [recipientId]
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Mark notification as sent
-   */
   async markAsSent(id) {
-    const repo = await getNotificationRepository();
-    const notification = await repo.fetch(id);
-    if (!notification || !notification.type) return null;
-
-    notification.status = NOTIFICATION_STATUS.SENT;
-    notification.sentAt = new Date();
-    notification.updatedAt = new Date();
-    await repo.save(notification);
-
-    return notification;
+    const { rows } = await query(
+      `UPDATE notifications SET status='${NOTIFICATION_STATUS.SENT}', sent_at=NOW() WHERE id=$1 RETURNING *`, [id]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Mark notification as read
-   */
   async markAsRead(id) {
-    const repo = await getNotificationRepository();
-    const notification = await repo.fetch(id);
-    if (!notification || !notification.type) return null;
-
-    notification.status = NOTIFICATION_STATUS.READ;
-    notification.readAt = new Date();
-    notification.updatedAt = new Date();
-    await repo.save(notification);
-
-    return notification;
+    const { rows } = await query(
+      `UPDATE notifications SET status='${NOTIFICATION_STATUS.READ}', read_at=NOW() WHERE id=$1 RETURNING *`, [id]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Mark notification as failed
-   */
   async markAsFailed(id, reason) {
-    const repo = await getNotificationRepository();
-    const notification = await repo.fetch(id);
-    if (!notification || !notification.type) return null;
-
-    notification.status = NOTIFICATION_STATUS.FAILED;
-    notification.failedAt = new Date();
-    notification.failureReason = reason;
-    notification.updatedAt = new Date();
-    await repo.save(notification);
-
-    return notification;
+    const { rows } = await query(
+      `UPDATE notifications SET status='${NOTIFICATION_STATUS.FAILED}', failed_at=NOW(), failure_reason=$1
+       WHERE id=$2 RETURNING *`,
+      [reason, id]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Mark all notifications as read for a recipient
-   */
   async markAllAsRead(recipientId) {
-    const repo = await getNotificationRepository();
-    const notifications = await repo.search()
-      .where('recipientId').equals(recipientId)
-      .return.all();
-
-    const unreadNotifications = notifications.filter(n => !n.readAt);
-    const now = new Date();
-
-    for (const notification of unreadNotifications) {
-      notification.status = NOTIFICATION_STATUS.READ;
-      notification.readAt = now;
-      notification.updatedAt = now;
-      await repo.save(notification);
-    }
-
-    return { modifiedCount: unreadNotifications.length };
+    const { rowCount } = await query(
+      `UPDATE notifications SET status='${NOTIFICATION_STATUS.READ}', read_at=NOW()
+       WHERE recipient_id=$1 AND read_at IS NULL`,
+      [recipientId]
+    );
+    return { modifiedCount: rowCount };
   },
 
-  /**
-   * Find pending notifications
-   */
   async findPending(limit = 100) {
-    const repo = await getNotificationRepository();
-    return repo.search()
-      .where('status').equals(NOTIFICATION_STATUS.PENDING)
-      .sortBy('createdAt', 'ASC')
-      .return.page(0, limit);
+    const { rows } = await query(
+      `SELECT * FROM notifications WHERE status='${NOTIFICATION_STATUS.PENDING}' ORDER BY created_at ASC LIMIT $1`,
+      [limit]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Update notification by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getNotificationRepository();
-    const notification = await repo.fetch(id);
-    if (!notification || !notification.type) return null;
-
-    const jsonFields = ['recipient', 'channel', 'data', 'emailDetails', 'pushDetails'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      status:        'status',
+      sentAt:        'sent_at',
+      readAt:        'read_at',
+      failedAt:      'failed_at',
+      failureReason: 'failure_reason',
+      emailDetails:  'email_details',
+      pushDetails:   'push_details',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    // Update recipientId if recipient changes
-    if (updateData.recipient) {
-      const recipientObj = typeof updateData.recipient === 'string'
-        ? JSON.parse(updateData.recipient)
-        : updateData.recipient;
-      updateData.recipientId = recipientObj.id;
-    }
-
-    Object.assign(notification, updateData, { updatedAt: new Date() });
-    await repo.save(notification);
-
-    return options.new !== false ? notification : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE notifications SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find notifications with filters
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getNotificationRepository();
-    let search = repo.search();
-
-    if (query.recipientId || query['recipient.id']) {
-      search = search.where('recipientId').equals(query.recipientId || query['recipient.id']);
-    }
-    if (query.type) {
-      search = search.where('type').equals(query.type);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    const page = options.page || 1;
-    const limit = options.limit || 50;
-    const offset = (page - 1) * limit;
-
-    return search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
+  async find(filters = {}, options = {}) {
+    const { limit = 50, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    const rid = filters.recipientId || filters['recipient.id'];
+    if (rid)           { conds.push(`recipient_id=$${i++}`); vals.push(rid); }
+    if (filters.type)  { conds.push(`type=$${i++}`);         vals.push(filters.type); }
+    if (filters.status){ conds.push(`status=$${i++}`);       vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT * FROM notifications WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count notifications
-   */
-  async countDocuments(query = {}) {
-    const repo = await getNotificationRepository();
-    let search = repo.search();
-
-    if (query.recipientId || query['recipient.id']) {
-      search = search.where('recipientId').equals(query.recipientId || query['recipient.id']);
-    }
-    if (query.type) {
-      search = search.where('type').equals(query.type);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    const rid = filters.recipientId || filters['recipient.id'];
+    if (rid)           { conds.push(`recipient_id=$${i++}`); vals.push(rid); }
+    if (filters.type)  { conds.push(`type=$${i++}`);         vals.push(filters.type); }
+    if (filters.status){ conds.push(`status=$${i++}`);       vals.push(filters.status); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM notifications WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete notification
-   */
   async delete(id) {
-    const repo = await getNotificationRepository();
-    await repo.remove(id);
+    await query('DELETE FROM notifications WHERE id=$1', [id]);
   },
 };
 

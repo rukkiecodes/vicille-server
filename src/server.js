@@ -2,10 +2,10 @@ import { createServer } from 'http';
 import app from './app.js';
 import config, { validateConfig } from './config/index.js';
 import { connectRedis, disconnectRedis } from './infrastructure/database/redis.js';
-import { initializeFirebase, disconnectFirebase } from './infrastructure/database/firebase.js';
+import { connectPostgres, disconnectPostgres } from './infrastructure/database/postgres.js';
 import logger from './core/logger/index.js';
 import { setupGraphQL } from './graphql/index.js';
-// import { initializeSocket } from './sockets/index.js';
+import { initializeSocket } from './sockets/index.js';
 
 // Validate configuration
 try {
@@ -22,18 +22,15 @@ const httpServer = createServer(app);
 const gracefulShutdown = async (signal) => {
   logger.info(`${signal} received. Starting graceful shutdown...`);
 
-  // Stop accepting new connections
   httpServer.close(async () => {
     logger.info('HTTP server closed');
 
     try {
-      // Disconnect from Redis
       await disconnectRedis();
       logger.info('Redis connection closed');
 
-      // Disconnect from Firebase
-      await disconnectFirebase();
-      logger.info('Firebase connection closed');
+      await disconnectPostgres();
+      logger.info('PostgreSQL connection closed');
 
       process.exit(0);
     } catch (error) {
@@ -52,18 +49,20 @@ const gracefulShutdown = async (signal) => {
 // Start server
 const startServer = async () => {
   try {
-    // Initialize Firebase
-    initializeFirebase();
+    // Connect to PostgreSQL (Supabase)
+    await connectPostgres();
+    logger.info('Connected to Supabase PostgreSQL successfully');
 
-    // Connect to Redis
+    // Connect to Redis (caching)
     await connectRedis();
     logger.info('Connected to Redis successfully');
 
     // Setup GraphQL server
     await setupGraphQL(app, httpServer);
 
-    // TODO: Initialize Socket.io
-    // initializeSocket(httpServer);
+    // Initialize Socket.io
+    initializeSocket(httpServer);
+    logger.info('Socket.io initialized');
 
     // Start listening
     httpServer.listen(config.server.port, () => {
@@ -71,27 +70,26 @@ const startServer = async () => {
 ========================================
   Vicelle Backend Server Started
 ========================================
-  Environment: ${config.env}
-  Port: ${config.server.port}
-  Database: Firestore (Primary)
-  Cache: Redis
-  GraphQL: http://${config.server.host}:${config.server.port}/graphql
-  Health: http://${config.server.host}:${config.server.port}/health
+  Environment : ${config.env}
+  Port        : ${config.server.port}
+  Database    : Supabase PostgreSQL
+  Cache       : Redis
+  GraphQL     : http://${config.server.host}:${config.server.port}/graphql
+  Health      : http://${config.server.host}:${config.server.port}/health
+  Sockets     : /user  /tailor  /admin
 ========================================
       `);
     });
 
-    // Handle shutdown signals
+    // Shutdown signals
     process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
     process.on('SIGINT', () => gracefulShutdown('SIGINT'));
 
-    // Handle uncaught exceptions
     process.on('uncaughtException', (error) => {
       logger.error('Uncaught Exception:', error);
       gracefulShutdown('uncaughtException');
     });
 
-    // Handle unhandled promise rejections
     process.on('unhandledRejection', (reason, promise) => {
       logger.error('Unhandled Rejection at:', promise, 'reason:', reason);
     });
@@ -101,7 +99,6 @@ const startServer = async () => {
   }
 };
 
-// Start the server
 startServer();
 
 export default httpServer;

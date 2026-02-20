@@ -1,322 +1,221 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { generateSpecialRequestNumber } from '../../core/utils/randomCode.js';
 
-// SpecialRequest Entity class
-class Model {
-  // Get parsed inspiration
-  get inspirationParsed() {
-    return this.inspiration ? JSON.parse(this.inspiration) : [];
-  }
+function format(row) {
+  if (!row) return null;
+  const s = {
+    id:                     row.id,
+    entityId:               row.id,
+    requestNumber:          row.request_number,
+    user:                   row.user_id,
+    userId:                 row.user_id,
+    eventOccasion:          row.event_occasion,
+    description:            row.description,
+    urgency:                row.urgency,
+    inspiration:            row.inspiration || [],
+    pricing:                row.pricing,
+    quoteApprovedBy:        row.quote_approved_by,
+    quoteApprovedAt:        row.quote_approved_at,
+    depositPayment:         row.deposit_payment_id,
+    balancePayment:         row.balance_payment_id,
+    measurement:            row.measurement_id,
+    order:                  row.order_id,
+    status:                 row.status,
+    reviewedBy:             row.reviewed_by,
+    reviewNotes:            row.review_notes,
+    communications:         row.communications || [],
+    requestedDeliveryDate:  row.requested_delivery_date,
+    createdAt:              row.created_at,
+    updatedAt:              row.updated_at,
+  };
 
-  // Get parsed pricing
-  get pricingParsed() {
-    return this.pricing ? JSON.parse(this.pricing) : null;
-  }
+  Object.defineProperties(s, {
+    isQuoteApproved: { get() { return !!this.quoteApprovedAt; }},
+    isDepositPaid:   { get() { return !!this.depositPayment; }},
+    isFullyPaid:     { get() { return !!this.depositPayment && !!this.balancePayment; }},
+    formattedQuote:  { get() {
+      if (!this.pricing?.totalQuote) return null;
+      return `₦${(this.pricing.totalQuote / 100).toLocaleString()}`;
+    }},
+  });
 
-  // Get parsed communications
-  get communicationsParsed() {
-    return this.communications ? JSON.parse(this.communications) : [];
-  }
+  s.toSafeJSON = () => ({
+    id: s.entityId, requestNumber: s.requestNumber, user: s.user,
+    eventOccasion: s.eventOccasion, description: s.description, urgency: s.urgency,
+    inspiration: s.inspiration, pricing: s.pricing, quoteApprovedBy: s.quoteApprovedBy,
+    quoteApprovedAt: s.quoteApprovedAt, depositPayment: s.depositPayment,
+    balancePayment: s.balancePayment, measurement: s.measurement, order: s.order,
+    status: s.status, reviewedBy: s.reviewedBy, reviewNotes: s.reviewNotes,
+    communications: s.communications, requestedDeliveryDate: s.requestedDeliveryDate,
+    createdAt: s.createdAt, updatedAt: s.updatedAt,
+    isQuoteApproved: s.isQuoteApproved, isDepositPaid: s.isDepositPaid,
+    isFullyPaid: s.isFullyPaid, formattedQuote: s.formattedQuote,
+  });
 
-  // Virtual for isQuoteApproved
-  get isQuoteApproved() {
-    return !!this.quoteApprovedAt;
-  }
-
-  // Virtual for isDepositPaid
-  get isDepositPaid() {
-    return !!this.depositPayment;
-  }
-
-  // Virtual for isFullyPaid
-  get isFullyPaid() {
-    return !!this.depositPayment && !!this.balancePayment;
-  }
-
-  // Virtual for formattedQuote
-  get formattedQuote() {
-    const pricing = this.pricingParsed;
-    if (!pricing?.totalQuote) return null;
-    const amount = pricing.totalQuote / 100;
-    return `₦${amount.toLocaleString()}`;
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      requestNumber: this.requestNumber,
-      user: this.user,
-      eventOccasion: this.eventOccasion,
-      description: this.description,
-      urgency: this.urgency,
-      inspiration: this.inspirationParsed,
-      pricing: this.pricingParsed,
-      quoteApprovedBy: this.quoteApprovedBy,
-      quoteApprovedAt: this.quoteApprovedAt,
-      depositPayment: this.depositPayment,
-      balancePayment: this.balancePayment,
-      measurement: this.measurement,
-      order: this.order,
-      status: this.status,
-      reviewedBy: this.reviewedBy,
-      reviewNotes: this.reviewNotes,
-      communications: this.communicationsParsed,
-      requestedDeliveryDate: this.requestedDeliveryDate,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isQuoteApproved: this.isQuoteApproved,
-      isDepositPaid: this.isDepositPaid,
-      isFullyPaid: this.isFullyPaid,
-      formattedQuote: this.formattedQuote,
-    };
-  }
+  return s;
 }
 
-// SpecialRequest Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const SpecialRequestModel = {
-  /**
-   * Create a new special request
-   */
-  async create(requestData) {
-    const repo = await getSpecialRequestRepository();
-
-    const now = new Date();
-    const requestNumber = requestData.requestNumber || generateSpecialRequestNumber();
-
-    // Calculate pricing if provided
-    let pricing = requestData.pricing;
-    if (pricing && pricing.totalQuote) {
+  async create(data) {
+    const requestNumber = data.requestNumber || generateSpecialRequestNumber();
+    let pricing = data.pricing;
+    if (pricing?.totalQuote) {
       pricing.depositAmount = Math.ceil(pricing.totalQuote * 0.5);
-      pricing.balanceAmount = pricing.totalQuote - pricing.depositAmount;
+      pricing.balanceAmount  = pricing.totalQuote - pricing.depositAmount;
     }
 
-    const specialRequest = await repo.save({
-      requestNumber,
-      user: requestData.user,
-      eventOccasion: requestData.eventOccasion,
-      description: requestData.description,
-      urgency: requestData.urgency || 'standard',
-      inspiration: requestData.inspiration ? JSON.stringify(requestData.inspiration) : '[]',
-      pricing: pricing ? JSON.stringify(pricing) : null,
-      quoteApprovedBy: requestData.quoteApprovedBy,
-      quoteApprovedAt: requestData.quoteApprovedAt,
-      depositPayment: requestData.depositPayment,
-      balancePayment: requestData.balancePayment,
-      measurement: requestData.measurement,
-      order: requestData.order,
-      status: requestData.status || 'pending_quote',
-      reviewedBy: requestData.reviewedBy,
-      reviewNotes: requestData.reviewNotes,
-      communications: requestData.communications ? JSON.stringify(requestData.communications) : '[]',
-      requestedDeliveryDate: requestData.requestedDeliveryDate,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return specialRequest;
+    const { rows } = await query(
+      `INSERT INTO special_requests
+         (request_number, user_id, event_occasion, description, urgency, inspiration, pricing,
+          quote_approved_by, quote_approved_at, deposit_payment_id, balance_payment_id,
+          measurement_id, order_id, status, reviewed_by, review_notes, communications,
+          requested_delivery_date)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *`,
+      [
+        requestNumber,
+        data.user || data.userId,
+        data.eventOccasion || null,
+        data.description || null,
+        data.urgency || 'standard',
+        data.inspiration || [],
+        pricing || null,
+        data.quoteApprovedBy || null,
+        data.quoteApprovedAt || null,
+        data.depositPayment || null,
+        data.balancePayment || null,
+        data.measurement || data.measurementId || null,
+        data.order || data.orderId || null,
+        data.status || 'pending_quote',
+        data.reviewedBy || null,
+        data.reviewNotes || null,
+        data.communications || [],
+        data.requestedDeliveryDate || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find special request by ID
-   */
   async findById(id) {
-    const repo = await getSpecialRequestRepository();
-    const request = await repo.fetch(id);
-    if (!request || !request.requestNumber) return null;
-    return request;
+    const { rows } = await query('SELECT * FROM special_requests WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find by request number
-   */
   async findByRequestNumber(requestNumber) {
-    const repo = await getSpecialRequestRepository();
-    const request = await repo.search()
-      .where('requestNumber').equals(requestNumber)
-      .return.first();
-    return request;
+    const { rows } = await query('SELECT * FROM special_requests WHERE request_number=$1', [requestNumber]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update special request by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getSpecialRequestRepository();
-    const request = await repo.fetch(id);
-    if (!request || !request.requestNumber) return null;
-
-    // Serialize complex objects
-    const jsonFields = ['inspiration', 'pricing', 'communications'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      eventOccasion:         'event_occasion',
+      description:           'description',
+      urgency:               'urgency',
+      inspiration:           'inspiration',
+      pricing:               'pricing',
+      quoteApprovedBy:       'quote_approved_by',
+      quoteApprovedAt:       'quote_approved_at',
+      depositPayment:        'deposit_payment_id',
+      balancePayment:        'balance_payment_id',
+      measurement:           'measurement_id',
+      order:                 'order_id',
+      status:                'status',
+      reviewedBy:            'reviewed_by',
+      reviewNotes:           'review_notes',
+      communications:        'communications',
+      requestedDeliveryDate: 'requested_delivery_date',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    // Update fields
-    Object.assign(request, updateData, { updatedAt: new Date() });
-    await repo.save(request);
-
-    return options.new !== false ? request : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE special_requests SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Send quote
-   */
   async sendQuote(id, pricingData, reviewedBy, notes) {
-    const repo = await getSpecialRequestRepository();
-    const request = await repo.fetch(id);
-    if (!request || !request.requestNumber) return null;
-
     const totalQuote =
       (pricingData.materialCost || 0) +
-      (pricingData.urgencyFee || 0) +
-      (pricingData.deliveryFee || 0) +
-      (pricingData.serviceFee || 0);
-
+      (pricingData.urgencyFee   || 0) +
+      (pricingData.deliveryFee  || 0) +
+      (pricingData.serviceFee   || 0);
     const pricing = {
-      ...pricingData,
-      totalQuote,
+      ...pricingData, totalQuote,
       depositAmount: Math.ceil(totalQuote * 0.5),
       balanceAmount: totalQuote - Math.ceil(totalQuote * 0.5),
     };
-
-    request.pricing = JSON.stringify(pricing);
-    request.status = 'quote_sent';
-    request.reviewedBy = reviewedBy;
-    request.reviewNotes = notes;
-    request.updatedAt = new Date();
-
-    await repo.save(request);
-    return request;
+    return this.findByIdAndUpdate(id, { pricing, status: 'quote_sent', reviewedBy, reviewNotes: notes });
   },
 
-  /**
-   * Approve quote
-   */
   async approveQuote(id, userId) {
-    const repo = await getSpecialRequestRepository();
-    const request = await repo.fetch(id);
-    if (!request || !request.requestNumber) return null;
-
-    request.quoteApprovedBy = userId;
-    request.quoteApprovedAt = new Date();
-    request.status = 'deposit_pending';
-    request.updatedAt = new Date();
-
-    await repo.save(request);
-    return request;
-  },
-
-  /**
-   * Add communication
-   */
-  async addCommunication(id, from, message) {
-    const repo = await getSpecialRequestRepository();
-    const request = await repo.fetch(id);
-    if (!request || !request.requestNumber) return null;
-
-    const communications = request.communicationsParsed;
-    communications.push({
-      from,
-      message,
-      timestamp: new Date().toISOString(),
+    return this.findByIdAndUpdate(id, {
+      quoteApprovedBy: userId,
+      quoteApprovedAt: new Date(),
+      status: 'deposit_pending',
     });
-
-    request.communications = JSON.stringify(communications);
-    request.updatedAt = new Date();
-
-    await repo.save(request);
-    return request;
   },
 
-  /**
-   * Find by user
-   */
+  async addCommunication(id, from, message) {
+    const req = await this.findById(id);
+    if (!req) return null;
+    const comms = [...(req.communications || []), { from, message, timestamp: new Date().toISOString() }];
+    return this.findByIdAndUpdate(id, { communications: comms });
+  },
+
   async findByUser(userId) {
-    const repo = await getSpecialRequestRepository();
-    return repo.search()
-      .where('user').equals(userId)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM special_requests WHERE user_id=$1 ORDER BY created_at DESC', [userId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find pending quote
-   */
   async findPendingQuote() {
-    const repo = await getSpecialRequestRepository();
-    return repo.search()
-      .where('status').equals('pending_quote')
-      .sortBy('createdAt', 'ASC')
-      .return.all();
+    const { rows } = await query(
+      `SELECT * FROM special_requests WHERE status='pending_quote' ORDER BY created_at ASC`
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find awaiting deposit
-   */
   async findAwaitingDeposit() {
-    const repo = await getSpecialRequestRepository();
-    return repo.search()
-      .where('status').equals('deposit_pending')
-      .sortBy('createdAt', 'ASC')
-      .return.all();
+    const { rows } = await query(
+      `SELECT * FROM special_requests WHERE status='deposit_pending' ORDER BY created_at ASC`
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find all special requests with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getSpecialRequestRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const requests = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return requests;
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)   { conds.push(`user_id=$${i++}`); vals.push(filters.user); }
+    if (filters.status) { conds.push(`status=$${i++}`);  vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT * FROM special_requests WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count special requests
-   */
-  async countDocuments(query = {}) {
-    const repo = await getSpecialRequestRepository();
-    let search = repo.search();
-
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)   { conds.push(`user_id=$${i++}`); vals.push(filters.user); }
+    if (filters.status) { conds.push(`status=$${i++}`);  vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM special_requests WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete special request (hard delete)
-   */
   async delete(id) {
-    const repo = await getSpecialRequestRepository();
-    await repo.remove(id);
+    await query('DELETE FROM special_requests WHERE id=$1', [id]);
   },
 };
 

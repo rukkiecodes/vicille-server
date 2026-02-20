@@ -1,326 +1,208 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { generatePayoutNumber } from '../../core/utils/randomCode.js';
 import { PAYOUT_STATUS } from '../../core/constants/paymentStatus.js';
 
-// Payout Entity class
-class Model {
-  // Get parsed period
-  get periodParsed() {
-    return this.period ? JSON.parse(this.period) : null;
-  }
+function format(row) {
+  if (!row) return null;
+  const p = {
+    id:                row.id,
+    entityId:          row.id,
+    payoutNumber:      row.payout_number,
+    tailor:            row.tailor_id,
+    tailorId:          row.tailor_id,
+    period:            row.period,
+    jobs:              row.jobs || [],
+    totalAmount:       row.total_amount,
+    currency:          row.currency,
+    breakdown:         row.breakdown || [],
+    advanceAmount:     row.advance_amount,
+    netAmount:         row.net_amount,
+    status:            row.status,
+    paymentMethod:     row.payment_method,
+    bankDetails:       row.bank_details,
+    processedBy:       row.processed_by,
+    processedAt:       row.processed_at,
+    providerReference: row.provider_reference,
+    providerResponse:  row.provider_response,
+    paidAt:            row.paid_at,
+    failedAt:          row.failed_at,
+    failureReason:     row.failure_reason,
+    createdAt:         row.created_at,
+    updatedAt:         row.updated_at,
+  };
 
-  // Get parsed breakdown
-  get breakdownParsed() {
-    return this.breakdown ? JSON.parse(this.breakdown) : [];
-  }
+  Object.defineProperties(p, {
+    formattedAmount: { get() { return `₦${(this.totalAmount / 100).toLocaleString()}`; }},
+    isPaid:          { get() { return this.status === PAYOUT_STATUS.PAID; }},
+    jobCount:        { get() { return (this.jobs || []).length; }},
+  });
 
-  // Get parsed bank details
-  get bankDetailsParsed() {
-    return this.bankDetails ? JSON.parse(this.bankDetails) : null;
-  }
+  p.toSafeJSON = () => ({
+    ...p, formattedAmount: p.formattedAmount, isPaid: p.isPaid, jobCount: p.jobCount,
+  });
 
-  // Get parsed provider response
-  get providerResponseParsed() {
-    return this.providerResponse ? JSON.parse(this.providerResponse) : null;
-  }
-
-  // Get parsed jobs array
-  get jobsParsed() {
-    return this.jobs ? JSON.parse(this.jobs) : [];
-  }
-
-  // Get formatted amount
-  get formattedAmount() {
-    const amount = this.totalAmount / 100;
-    return `₦${amount.toLocaleString()}`;
-  }
-
-  // Check if payout is paid
-  get isPaid() {
-    return this.status === PAYOUT_STATUS.PAID;
-  }
-
-  // Get job count
-  get jobCount() {
-    const jobs = this.jobsParsed;
-    return jobs?.length || 0;
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      payoutNumber: this.payoutNumber,
-      tailor: this.tailor,
-      period: this.periodParsed,
-      jobs: this.jobsParsed,
-      totalAmount: this.totalAmount,
-      currency: this.currency,
-      breakdown: this.breakdownParsed,
-      advanceAmount: this.advanceAmount,
-      netAmount: this.netAmount,
-      status: this.status,
-      paymentMethod: this.paymentMethod,
-      bankDetails: this.bankDetailsParsed,
-      processedBy: this.processedBy,
-      processedAt: this.processedAt,
-      providerReference: this.providerReference,
-      providerResponse: this.providerResponseParsed,
-      paidAt: this.paidAt,
-      failedAt: this.failedAt,
-      failureReason: this.failureReason,
-      formattedAmount: this.formattedAmount,
-      isPaid: this.isPaid,
-      jobCount: this.jobCount,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-    };
-  }
+  return p;
 }
 
-// Payout Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const PayoutModel = {
-  /**
-   * Create a new payout
-   */
-  async create(payoutData) {
-    const repo = await getPayoutRepository();
+  async create(data) {
+    const totalAmount   = data.totalAmount   || 0;
+    const advanceAmount = data.advanceAmount || 0;
+    const netAmount     = data.netAmount !== undefined ? data.netAmount : totalAmount - advanceAmount;
+    const payoutNumber  = data.payoutNumber || generatePayoutNumber((data.period?.weekNumber) || 1);
 
-    const now = new Date();
-    const periodData = payoutData.period || {};
-    const payoutNumber = payoutData.payoutNumber || generatePayoutNumber(periodData.weekNumber || 1);
-
-    // Calculate net amount
-    const totalAmount = payoutData.totalAmount || 0;
-    const advanceAmount = payoutData.advanceAmount || 0;
-    const netAmount = totalAmount - advanceAmount;
-
-    const payout = await repo.save({
-      payoutNumber,
-      tailor: payoutData.tailor,
-      period: payoutData.period ? JSON.stringify(payoutData.period) : null,
-      jobs: payoutData.jobs ? JSON.stringify(payoutData.jobs) : '[]',
-      totalAmount,
-      currency: payoutData.currency || 'NGN',
-      breakdown: payoutData.breakdown ? JSON.stringify(payoutData.breakdown) : '[]',
-      advanceAmount,
-      netAmount: payoutData.netAmount !== undefined ? payoutData.netAmount : netAmount,
-      status: payoutData.status || PAYOUT_STATUS.PENDING,
-      paymentMethod: payoutData.paymentMethod || 'bank_transfer',
-      bankDetails: payoutData.bankDetails ? JSON.stringify(payoutData.bankDetails) : null,
-      processedBy: payoutData.processedBy,
-      processedAt: payoutData.processedAt,
-      providerReference: payoutData.providerReference,
-      providerResponse: payoutData.providerResponse ? JSON.stringify(payoutData.providerResponse) : null,
-      paidAt: payoutData.paidAt,
-      failedAt: payoutData.failedAt,
-      failureReason: payoutData.failureReason,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return payout;
+    const { rows } = await query(
+      `INSERT INTO payouts
+         (payout_number, tailor_id, period, jobs, total_amount, currency, breakdown,
+          advance_amount, net_amount, status, payment_method, bank_details, processed_by,
+          processed_at, provider_reference, provider_response, paid_at, failed_at, failure_reason)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+      [
+        payoutNumber,
+        data.tailor || data.tailorId,
+        data.period || null,
+        data.jobs || [],
+        totalAmount,
+        data.currency || 'NGN',
+        data.breakdown || [],
+        advanceAmount,
+        netAmount,
+        data.status || PAYOUT_STATUS.PENDING,
+        data.paymentMethod || 'bank_transfer',
+        data.bankDetails || null,
+        data.processedBy || null,
+        data.processedAt || null,
+        data.providerReference || null,
+        data.providerResponse || null,
+        data.paidAt || null,
+        data.failedAt || null,
+        data.failureReason || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find payout by ID
-   */
   async findById(id) {
-    const repo = await getPayoutRepository();
-    const payout = await repo.fetch(id);
-    if (!payout || !payout.payoutNumber) return null;
-    return payout;
+    const { rows } = await query('SELECT * FROM payouts WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find payout by payout number
-   */
   async findByPayoutNumber(payoutNumber) {
-    const repo = await getPayoutRepository();
-    const payout = await repo.search()
-      .where('payoutNumber').equals(payoutNumber)
-      .return.first();
-    return payout;
+    const { rows } = await query('SELECT * FROM payouts WHERE payout_number=$1', [payoutNumber]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update payout by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getPayoutRepository();
-    const payout = await repo.fetch(id);
-    if (!payout || !payout.payoutNumber) return null;
-
-    // Serialize complex objects
-    const jsonFields = ['period', 'jobs', 'breakdown', 'bankDetails', 'providerResponse'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      status:            'status',
+      period:            'period',
+      jobs:              'jobs',
+      totalAmount:       'total_amount',
+      advanceAmount:     'advance_amount',
+      netAmount:         'net_amount',
+      breakdown:         'breakdown',
+      paymentMethod:     'payment_method',
+      bankDetails:       'bank_details',
+      processedBy:       'processed_by',
+      processedAt:       'processed_at',
+      providerReference: 'provider_reference',
+      providerResponse:  'provider_response',
+      paidAt:            'paid_at',
+      failedAt:          'failed_at',
+      failureReason:     'failure_reason',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    // Recalculate net if total or advance change without explicit netAmount
+    if ((updates.totalAmount !== undefined || updates.advanceAmount !== undefined) && !('netAmount' in updates)) {
+      updates.netAmount = (updates.totalAmount ?? 0) - (updates.advanceAmount ?? 0);
     }
-
-    // Recalculate net amount if relevant fields are updated
-    if (updateData.totalAmount !== undefined || updateData.advanceAmount !== undefined) {
-      const totalAmount = updateData.totalAmount !== undefined ? updateData.totalAmount : payout.totalAmount;
-      const advanceAmount = updateData.advanceAmount !== undefined ? updateData.advanceAmount : payout.advanceAmount;
-      updateData.netAmount = totalAmount - advanceAmount;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    // Update fields
-    Object.assign(payout, updateData, { updatedAt: new Date() });
-    await repo.save(payout);
-
-    return options.new !== false ? payout : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE payouts SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Mark payout as processing
-   */
   async markAsProcessing(id, processedBy) {
-    const repo = await getPayoutRepository();
-    const payout = await repo.fetch(id);
-    if (!payout || !payout.payoutNumber) return null;
-
-    payout.status = PAYOUT_STATUS.PROCESSING;
-    payout.processedBy = processedBy;
-    payout.processedAt = new Date();
-    payout.updatedAt = new Date();
-    await repo.save(payout);
-
-    return payout;
+    return this.findByIdAndUpdate(id, {
+      status: PAYOUT_STATUS.PROCESSING, processedBy, processedAt: new Date(),
+    });
   },
 
-  /**
-   * Mark payout as paid
-   */
   async markAsPaid(id, providerResponse) {
-    const repo = await getPayoutRepository();
-    const payout = await repo.fetch(id);
-    if (!payout || !payout.payoutNumber) return null;
-
-    payout.status = PAYOUT_STATUS.PAID;
-    payout.paidAt = new Date();
-    payout.providerReference = providerResponse?.reference;
-    payout.providerResponse = providerResponse ? JSON.stringify(providerResponse) : null;
-    payout.updatedAt = new Date();
-    await repo.save(payout);
-
-    return payout;
+    return this.findByIdAndUpdate(id, {
+      status: PAYOUT_STATUS.PAID,
+      paidAt: new Date(),
+      providerReference: providerResponse?.reference,
+      providerResponse,
+    });
   },
 
-  /**
-   * Mark payout as failed
-   */
   async markAsFailed(id, reason) {
-    const repo = await getPayoutRepository();
-    const payout = await repo.fetch(id);
-    if (!payout || !payout.payoutNumber) return null;
-
-    payout.status = PAYOUT_STATUS.FAILED;
-    payout.failedAt = new Date();
-    payout.failureReason = reason;
-    payout.updatedAt = new Date();
-    await repo.save(payout);
-
-    return payout;
+    return this.findByIdAndUpdate(id, {
+      status: PAYOUT_STATUS.FAILED, failedAt: new Date(), failureReason: reason,
+    });
   },
 
-  /**
-   * Find payouts by tailor
-   */
   async findByTailor(tailorId) {
-    const repo = await getPayoutRepository();
-    return repo.search()
-      .where('tailor').equals(tailorId)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM payouts WHERE tailor_id=$1 ORDER BY created_at DESC', [tailorId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find pending payouts
-   */
   async findPending() {
-    const repo = await getPayoutRepository();
-    return repo.search()
-      .where('status').equals(PAYOUT_STATUS.PENDING)
-      .sortBy('createdAt', 'ASC')
-      .return.all();
+    const { rows } = await query(
+      `SELECT * FROM payouts WHERE status='${PAYOUT_STATUS.PENDING}' ORDER BY created_at ASC`
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Get tailor earnings summary
-   */
   async getTailorEarningsSummary(tailorId) {
-    const repo = await getPayoutRepository();
-    const payouts = await repo.search()
-      .where('tailor').equals(tailorId)
-      .return.all();
-
+    const { rows } = await query(
+      `SELECT status, COALESCE(SUM(total_amount), 0) AS total, COUNT(*) AS cnt
+       FROM payouts WHERE tailor_id=$1 GROUP BY status`,
+      [tailorId]
+    );
     const summary = {};
-    for (const payout of payouts) {
-      if (!summary[payout.status]) {
-        summary[payout.status] = { total: 0, count: 0 };
-      }
-      summary[payout.status].total += payout.totalAmount || 0;
-      summary[payout.status].count += 1;
+    for (const r of rows) {
+      summary[r.status] = { total: parseInt(r.total, 10), count: parseInt(r.cnt, 10) };
     }
-
     return summary;
   },
 
-  /**
-   * Find all payouts with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getPayoutRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const payouts = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return payouts;
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.tailor) { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.status) { conds.push(`status=$${i++}`);    vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT * FROM payouts WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count payouts
-   */
-  async countDocuments(query = {}) {
-    const repo = await getPayoutRepository();
-    let search = repo.search();
-
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.tailor) { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.status) { conds.push(`status=$${i++}`);    vals.push(filters.status); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM payouts WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete payout (hard delete)
-   */
   async delete(id) {
-    const repo = await getPayoutRepository();
-    await repo.remove(id);
+    await query('DELETE FROM payouts WHERE id=$1', [id]);
   },
 };
 

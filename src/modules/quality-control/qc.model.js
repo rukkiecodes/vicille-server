@@ -1,271 +1,181 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 
-// QCReview Entity class
-class Model {
-  // Get parsed criteria
-  get criteriaParsed() {
-    return this.criteria ? JSON.parse(this.criteria) : null;
-  }
-
-  // Get parsed group photo review
-  get groupPhotoReviewParsed() {
-    return this.groupPhotoReview ? JSON.parse(this.groupPhotoReview) : null;
-  }
-
-  // Get parsed issues
-  get issuesParsed() {
-    return this.issues ? JSON.parse(this.issues) : [];
-  }
-
-  // Check if approved
-  get isApproved() {
-    return this.decision === 'approved';
-  }
-
-  // Check if has issues
-  get hasIssues() {
-    const issues = this.issuesParsed;
-    return issues && issues.length > 0;
-  }
-
-  // Get critical issue count
-  get criticalIssueCount() {
-    const issues = this.issuesParsed;
-    if (!issues) return 0;
-    return issues.filter((i) => i.severity === 'critical').length;
-  }
-
-  // Convert to safe JSON
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      job: this.job,
-      order: this.order,
-      tailor: this.tailor,
-      reviewedBy: this.reviewedBy,
-      decision: this.decision,
-      criteria: this.criteriaParsed,
-      groupPhotoReview: this.groupPhotoReviewParsed,
-      issues: this.issuesParsed,
-      feedback: this.feedback,
-      internalNotes: this.internalNotes,
-      reworkRequired: this.reworkRequired,
-      reworkDeadline: this.reworkDeadline,
-      reworkCompleted: this.reworkCompleted,
-      reviewedAt: this.reviewedAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isApproved: this.isApproved,
-      hasIssues: this.hasIssues,
-      criticalIssueCount: this.criticalIssueCount,
-    };
-  }
-}
-
-// QCReview Schema for Redis OM
-// Schema definition removed
-// Repository holder
-/**
- * Calculate overall rating from criteria
- */
-const calculateOverallRating = (criteria) => {
+function calcCriteriaOverall(criteria) {
   if (!criteria) return criteria;
-
-  const ratings = [
-    criteria.craftsmanship,
-    criteria.accuracy,
-    criteria.finishing,
-    criteria.timeliness,
-  ].filter((r) => r !== undefined);
-
+  const ratings = [criteria.craftsmanship, criteria.accuracy, criteria.finishing, criteria.timeliness]
+    .filter(r => r !== undefined);
   if (ratings.length > 0) {
     criteria.overallRating = ratings.reduce((a, b) => a + b, 0) / ratings.length;
   }
-
   return criteria;
-};
+}
 
-// Static methods
+function format(row) {
+  if (!row) return null;
+  const q = {
+    id:               row.id,
+    entityId:         row.id,
+    job:              row.job_id,
+    jobId:            row.job_id,
+    order:            row.order_id,
+    orderId:          row.order_id,
+    tailor:           row.tailor_id,
+    tailorId:         row.tailor_id,
+    reviewedBy:       row.reviewed_by,
+    decision:         row.decision,
+    criteria:         row.criteria,
+    groupPhotoReview: row.group_photo_review,
+    issues:           row.issues || [],
+    feedback:         row.feedback,
+    internalNotes:    row.internal_notes,
+    reworkRequired:   row.rework_required,
+    reworkDeadline:   row.rework_deadline,
+    reworkCompleted:  row.rework_completed,
+    reviewedAt:       row.reviewed_at,
+    createdAt:        row.created_at,
+    updatedAt:        row.updated_at,
+  };
+
+  Object.defineProperties(q, {
+    isApproved:         { get() { return this.decision === 'approved'; }},
+    hasIssues:          { get() { return (this.issues || []).length > 0; }},
+    criticalIssueCount: { get() {
+      return (this.issues || []).filter(i => i.severity === 'critical').length;
+    }},
+  });
+
+  q.toSafeJSON = () => ({
+    ...q, isApproved: q.isApproved, hasIssues: q.hasIssues, criticalIssueCount: q.criticalIssueCount,
+  });
+
+  return q;
+}
+
 const QCReviewModel = {
-  /**
-   * Create a new QC review
-   */
-  async create(reviewData) {
-    const repo = await getQCReviewRepository();
+  async create(data) {
+    let criteria = data.criteria;
+    if (criteria) criteria = calcCriteriaOverall({ ...criteria });
 
-    const now = new Date();
-
-    // Calculate overall rating if criteria provided
-    let criteria = reviewData.criteria;
-    if (criteria) {
-      criteria = calculateOverallRating(criteria);
-    }
-
-    const qcReview = await repo.save({
-      job: reviewData.job,
-      order: reviewData.order,
-      tailor: reviewData.tailor,
-      reviewedBy: reviewData.reviewedBy,
-      decision: reviewData.decision,
-      criteria: criteria ? JSON.stringify(criteria) : null,
-      groupPhotoReview: reviewData.groupPhotoReview ? JSON.stringify(reviewData.groupPhotoReview) : null,
-      issues: reviewData.issues ? JSON.stringify(reviewData.issues) : '[]',
-      feedback: reviewData.feedback,
-      internalNotes: reviewData.internalNotes,
-      reworkRequired: reviewData.reworkRequired || false,
-      reworkDeadline: reviewData.reworkDeadline,
-      reworkCompleted: reviewData.reworkCompleted || false,
-      reviewedAt: reviewData.reviewedAt || now,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return qcReview;
+    const { rows } = await query(
+      `INSERT INTO qc_reviews
+         (job_id, order_id, tailor_id, reviewed_by, decision, criteria, group_photo_review,
+          issues, feedback, internal_notes, rework_required, rework_deadline, rework_completed, reviewed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *`,
+      [
+        data.job || data.jobId,
+        data.order || data.orderId || null,
+        data.tailor || data.tailorId,
+        data.reviewedBy,
+        data.decision,
+        criteria || null,
+        data.groupPhotoReview || null,
+        data.issues || [],
+        data.feedback || null,
+        data.internalNotes || null,
+        data.reworkRequired || false,
+        data.reworkDeadline || null,
+        data.reworkCompleted || false,
+        data.reviewedAt || new Date(),
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find QC review by ID
-   */
   async findById(id) {
-    const repo = await getQCReviewRepository();
-    const qcReview = await repo.fetch(id);
-    if (!qcReview || !qcReview.job) return null;
-    return qcReview;
+    const { rows } = await query('SELECT * FROM qc_reviews WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find QC review by job
-   */
   async findByJob(jobId) {
-    const repo = await getQCReviewRepository();
-    return repo.search()
-      .where('job').equals(jobId)
-      .return.first();
+    const { rows } = await query('SELECT * FROM qc_reviews WHERE job_id=$1 LIMIT 1', [jobId]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find QC reviews by tailor
-   */
   async findByTailor(tailorId) {
-    const repo = await getQCReviewRepository();
-    return repo.search()
-      .where('tailor').equals(tailorId)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM qc_reviews WHERE tailor_id=$1 ORDER BY created_at DESC', [tailorId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find pending rework
-   */
   async findPendingRework() {
-    const repo = await getQCReviewRepository();
-    const reviews = await repo.search()
-      .where('reworkRequired').equals(true)
-      .where('reworkCompleted').equals(false)
-      .return.all();
-    return reviews;
+    const { rows } = await query(
+      'SELECT * FROM qc_reviews WHERE rework_required=TRUE AND rework_completed=FALSE'
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Update QC review by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getQCReviewRepository();
-    const qcReview = await repo.fetch(id);
-    if (!qcReview || !qcReview.job) return null;
-
-    // Handle criteria overall rating calculation
-    if (updateData.criteria && typeof updateData.criteria === 'object') {
-      updateData.criteria = calculateOverallRating(updateData.criteria);
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      decision:         'decision',
+      criteria:         'criteria',
+      groupPhotoReview: 'group_photo_review',
+      issues:           'issues',
+      feedback:         'feedback',
+      internalNotes:    'internal_notes',
+      reworkRequired:   'rework_required',
+      reworkDeadline:   'rework_deadline',
+      reworkCompleted:  'rework_completed',
+      reviewedAt:       'reviewed_at',
+    };
+    if (updates.criteria && typeof updates.criteria === 'object') {
+      updates.criteria = calcCriteriaOverall({ ...updates.criteria });
     }
-
-    const jsonFields = ['criteria', 'groupPhotoReview', 'issues'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    Object.assign(qcReview, updateData, { updatedAt: new Date() });
-    await repo.save(qcReview);
-
-    return options.new !== false ? qcReview : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE qc_reviews SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Get tailor QC stats
-   */
   async getTailorStats(tailorId) {
-    const repo = await getQCReviewRepository();
-    const reviews = await repo.search()
-      .where('tailor').equals(tailorId)
-      .return.all();
-
+    const { rows } = await query(
+      `SELECT decision, COUNT(*) AS cnt FROM qc_reviews WHERE tailor_id=$1 GROUP BY decision`,
+      [tailorId]
+    );
     const stats = { approved: 0, rejected: 0, needs_rework: 0 };
-    for (const review of reviews) {
-      if (stats[review.decision] !== undefined) {
-        stats[review.decision]++;
-      }
+    for (const r of rows) {
+      if (r.decision in stats) stats[r.decision] = parseInt(r.cnt, 10);
     }
-
     return stats;
   },
 
-  /**
-   * Find QC reviews with filters
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getQCReviewRepository();
-    let search = repo.search();
-
-    if (query.job) {
-      search = search.where('job').equals(query.job);
-    }
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.reviewedBy) {
-      search = search.where('reviewedBy').equals(query.reviewedBy);
-    }
-    if (query.decision) {
-      search = search.where('decision').equals(query.decision);
-    }
-
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    return search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.job)        { conds.push(`job_id=$${i++}`);       vals.push(filters.job); }
+    if (filters.tailor)     { conds.push(`tailor_id=$${i++}`);    vals.push(filters.tailor); }
+    if (filters.reviewedBy) { conds.push(`reviewed_by=$${i++}`);  vals.push(filters.reviewedBy); }
+    if (filters.decision)   { conds.push(`decision=$${i++}`);     vals.push(filters.decision); }
+    const { rows } = await query(
+      `SELECT * FROM qc_reviews WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count QC reviews
-   */
-  async countDocuments(query = {}) {
-    const repo = await getQCReviewRepository();
-    let search = repo.search();
-
-    if (query.job) {
-      search = search.where('job').equals(query.job);
-    }
-    if (query.tailor) {
-      search = search.where('tailor').equals(query.tailor);
-    }
-    if (query.decision) {
-      search = search.where('decision').equals(query.decision);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.job)      { conds.push(`job_id=$${i++}`);    vals.push(filters.job); }
+    if (filters.tailor)   { conds.push(`tailor_id=$${i++}`); vals.push(filters.tailor); }
+    if (filters.decision) { conds.push(`decision=$${i++}`);  vals.push(filters.decision); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM qc_reviews WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete QC review
-   */
   async delete(id) {
-    const repo = await getQCReviewRepository();
-    await repo.remove(id);
+    await query('DELETE FROM qc_reviews WHERE id=$1', [id]);
   },
 };
 

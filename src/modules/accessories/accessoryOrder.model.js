@@ -1,252 +1,151 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 
-// AccessoryOrder Entity class
-class Model {
-  // Get parsed items
-  get itemsParsed() {
-    return this.items ? JSON.parse(this.items) : [];
-  }
+function format(row) {
+  if (!row) return null;
+  const o = {
+    id:            row.id,
+    entityId:      row.id,
+    user:          row.user_id,
+    userId:        row.user_id,
+    order:         row.order_id,
+    orderId:       row.order_id,
+    items:         row.items || [],
+    totalAmount:   row.total_amount,
+    payment:       row.payment_id,
+    paymentStatus: row.payment_status,
+    status:        row.status,
+    deliveredWith: row.delivered_with,
+    createdAt:     row.created_at,
+    updatedAt:     row.updated_at,
+  };
 
-  // Virtual for item count
-  get itemCount() {
-    const items = this.itemsParsed;
-    if (!items) return 0;
-    return items.reduce((sum, item) => sum + item.quantity, 0);
-  }
+  Object.defineProperties(o, {
+    itemCount:      { get() { return (this.items || []).reduce((s, i) => s + i.quantity, 0); }},
+    isPaid:         { get() { return this.paymentStatus === 'paid'; }},
+    formattedTotal: { get() { return `₦${(this.totalAmount / 100).toLocaleString()}`; }},
+  });
 
-  // Virtual for isPaid
-  get isPaid() {
-    return this.paymentStatus === 'paid';
-  }
+  o.toSafeJSON = () => ({
+    ...o, itemCount: o.itemCount, isPaid: o.isPaid, formattedTotal: o.formattedTotal,
+  });
 
-  // Virtual for formattedTotal
-  get formattedTotal() {
-    const amount = this.totalAmount / 100;
-    return `₦${amount.toLocaleString()}`;
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      user: this.user,
-      order: this.order,
-      items: this.itemsParsed,
-      totalAmount: this.totalAmount,
-      payment: this.payment,
-      paymentStatus: this.paymentStatus,
-      status: this.status,
-      deliveredWith: this.deliveredWith,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      itemCount: this.itemCount,
-      isPaid: this.isPaid,
-      formattedTotal: this.formattedTotal,
-    };
-  }
+  return o;
 }
 
-// AccessoryOrder Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const AccessoryOrderModel = {
-  /**
-   * Create a new accessory order
-   */
-  async create(orderData) {
-    const repo = await getAccessoryOrderRepository();
-
-    const now = new Date();
-
-    // Calculate subtotals and total if items provided
-    let items = orderData.items || [];
-    let totalAmount = orderData.totalAmount || 0;
-
+  async create(data) {
+    let items = data.items || [];
+    let totalAmount = data.totalAmount || 0;
     if (items.length > 0) {
-      items = items.map((item) => ({
-        ...item,
-        subtotal: item.price * item.quantity,
-      }));
+      items = items.map(item => ({ ...item, subtotal: item.price * item.quantity }));
       totalAmount = items.reduce((sum, item) => sum + item.subtotal, 0);
     }
 
-    const accessoryOrder = await repo.save({
-      user: orderData.user,
-      order: orderData.order,
-      items: JSON.stringify(items),
-      totalAmount,
-      payment: orderData.payment,
-      paymentStatus: orderData.paymentStatus || 'pending',
-      status: orderData.status || 'pending',
-      deliveredWith: orderData.deliveredWith,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return accessoryOrder;
+    const { rows } = await query(
+      `INSERT INTO accessory_orders
+         (user_id, order_id, items, total_amount, payment_id, payment_status, status, delivered_with)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        data.user || data.userId,
+        data.order || data.orderId || null,
+        items,
+        totalAmount,
+        data.payment || null,
+        data.paymentStatus || 'pending',
+        data.status || 'pending',
+        data.deliveredWith || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find accessory order by ID
-   */
   async findById(id) {
-    const repo = await getAccessoryOrderRepository();
-    const accessoryOrder = await repo.fetch(id);
-    if (!accessoryOrder || !accessoryOrder.user) return null;
-    return accessoryOrder;
+    const { rows } = await query('SELECT * FROM accessory_orders WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update accessory order by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getAccessoryOrderRepository();
-    const accessoryOrder = await repo.fetch(id);
-    if (!accessoryOrder || !accessoryOrder.user) return null;
-
-    // Serialize complex objects
-    if (updateData.items && typeof updateData.items === 'object') {
-      updateData.items = JSON.stringify(updateData.items);
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      items:         'items',
+      totalAmount:   'total_amount',
+      payment:       'payment_id',
+      paymentStatus: 'payment_status',
+      status:        'status',
+      deliveredWith: 'delivered_with',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    // Update fields
-    Object.assign(accessoryOrder, updateData, { updatedAt: new Date() });
-    await repo.save(accessoryOrder);
-
-    return options.new !== false ? accessoryOrder : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE accessory_orders SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Mark as paid
-   */
   async markAsPaid(id, paymentId) {
-    const repo = await getAccessoryOrderRepository();
-    const accessoryOrder = await repo.fetch(id);
-    if (!accessoryOrder || !accessoryOrder.user) return null;
-
-    accessoryOrder.payment = paymentId;
-    accessoryOrder.paymentStatus = 'paid';
-    accessoryOrder.status = 'processing';
-    accessoryOrder.updatedAt = new Date();
-
-    await repo.save(accessoryOrder);
-    return accessoryOrder;
+    return this.findByIdAndUpdate(id, { payment: paymentId, paymentStatus: 'paid', status: 'processing' });
   },
 
-  /**
-   * Mark as delivered
-   */
   async markAsDelivered(id, deliveredWithOrderId) {
-    const repo = await getAccessoryOrderRepository();
-    const accessoryOrder = await repo.fetch(id);
-    if (!accessoryOrder || !accessoryOrder.user) return null;
-
-    accessoryOrder.status = 'delivered';
-    accessoryOrder.deliveredWith = deliveredWithOrderId;
-    accessoryOrder.updatedAt = new Date();
-
-    await repo.save(accessoryOrder);
-    return accessoryOrder;
+    return this.findByIdAndUpdate(id, { status: 'delivered', deliveredWith: deliveredWithOrderId });
   },
 
-  /**
-   * Find by user
-   */
   async findByUser(userId) {
-    const repo = await getAccessoryOrderRepository();
-    return repo.search()
-      .where('user').equals(userId)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
+    const { rows } = await query(
+      'SELECT * FROM accessory_orders WHERE user_id=$1 ORDER BY created_at DESC', [userId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find by order
-   */
   async findByOrder(orderId) {
-    const repo = await getAccessoryOrderRepository();
-    return repo.search()
-      .where('order').equals(orderId)
-      .return.all();
+    const { rows } = await query('SELECT * FROM accessory_orders WHERE order_id=$1', [orderId]);
+    return rows.map(format);
   },
 
-  /**
-   * Find pending delivery
-   */
   async findPendingDelivery() {
-    const repo = await getAccessoryOrderRepository();
-    const orders = await repo.search()
-      .where('paymentStatus').equals('paid')
-      .sortBy('createdAt', 'ASC')
-      .return.all();
-
-    // Filter out delivered orders
-    return orders.filter(o => o.status !== 'delivered');
+    const { rows } = await query(
+      `SELECT * FROM accessory_orders WHERE payment_status='paid' AND status<>'delivered' ORDER BY created_at ASC`
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find all accessory orders with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getAccessoryOrderRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.order) {
-      search = search.where('order').equals(query.order);
-    }
-    if (query.paymentStatus) {
-      search = search.where('paymentStatus').equals(query.paymentStatus);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const orders = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return orders;
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)          { conds.push(`user_id=$${i++}`);        vals.push(filters.user); }
+    if (filters.order)         { conds.push(`order_id=$${i++}`);       vals.push(filters.order); }
+    if (filters.paymentStatus) { conds.push(`payment_status=$${i++}`); vals.push(filters.paymentStatus); }
+    if (filters.status)        { conds.push(`status=$${i++}`);         vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT * FROM accessory_orders WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count accessory orders
-   */
-  async countDocuments(query = {}) {
-    const repo = await getAccessoryOrderRepository();
-    let search = repo.search();
-
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.order) {
-      search = search.where('order').equals(query.order);
-    }
-    if (query.paymentStatus) {
-      search = search.where('paymentStatus').equals(query.paymentStatus);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)          { conds.push(`user_id=$${i++}`);        vals.push(filters.user); }
+    if (filters.order)         { conds.push(`order_id=$${i++}`);       vals.push(filters.order); }
+    if (filters.paymentStatus) { conds.push(`payment_status=$${i++}`); vals.push(filters.paymentStatus); }
+    if (filters.status)        { conds.push(`status=$${i++}`);         vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM accessory_orders WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete accessory order (hard delete)
-   */
   async delete(id) {
-    const repo = await getAccessoryOrderRepository();
-    await repo.remove(id);
+    await query('DELETE FROM accessory_orders WHERE id=$1', [id]);
   },
 };
 

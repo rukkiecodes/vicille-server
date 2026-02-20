@@ -1,356 +1,220 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { generateTransactionReference } from '../../core/utils/randomCode.js';
-import { PAYMENT_STATUS, PAYMENT_TYPE } from '../../core/constants/paymentStatus.js';
+import { PAYMENT_STATUS } from '../../core/constants/paymentStatus.js';
 
-// Payment Entity class
-class Model {
-  // Get parsed payment method object
-  get paymentMethodParsed() {
-    return this.paymentMethod ? JSON.parse(this.paymentMethod) : null;
-  }
+function format(row) {
+  if (!row) return null;
+  const p = {
+    id:                   row.id,
+    entityId:             row.id,
+    transactionReference: row.transaction_reference,
+    user:                 row.user_id,
+    userId:               row.user_id,
+    order:                row.order_id,
+    orderId:              row.order_id,
+    subscription:         row.subscription_id,
+    subscriptionId:       row.subscription_id,
+    paymentType:          row.payment_type,
+    amount:               row.amount,
+    currency:             row.currency,
+    paymentMethod:        row.payment_method,
+    status:               row.status,
+    providerReference:    row.provider_reference,
+    providerResponse:     row.provider_response,
+    metadata:             row.metadata,
+    refund:               row.refund,
+    retryCount:           row.retry_count,
+    nextRetryAt:          row.next_retry_at,
+    lastAttemptAt:        row.last_attempt_at,
+    paidAt:               row.paid_at,
+    failedAt:             row.failed_at,
+    refundedAt:           row.refunded_at,
+    createdAt:            row.created_at,
+    updatedAt:            row.updated_at,
+  };
 
-  // Get parsed metadata object
-  get metadataParsed() {
-    return this.metadata ? JSON.parse(this.metadata) : null;
-  }
+  Object.defineProperties(p, {
+    formattedAmount: { get() { return `₦${(this.amount / 100).toLocaleString()}`; }},
+    isPaid:          { get() { return this.status === PAYMENT_STATUS.SUCCESS; }},
+    canRetry:        { get() { return this.status === PAYMENT_STATUS.FAILED && this.retryCount < 3; }},
+  });
 
-  // Get parsed refund object
-  get refundParsed() {
-    return this.refund ? JSON.parse(this.refund) : null;
-  }
+  p.toSafeJSON = () => ({
+    ...p, formattedAmount: p.formattedAmount, isPaid: p.isPaid, canRetry: p.canRetry,
+  });
 
-  // Get parsed provider response object
-  get providerResponseParsed() {
-    return this.providerResponse ? JSON.parse(this.providerResponse) : null;
-  }
-
-  // Virtual for formattedAmount
-  get formattedAmount() {
-    const amount = this.amount / 100;
-    return `₦${amount.toLocaleString()}`;
-  }
-
-  // Virtual for isPaid
-  get isPaid() {
-    return this.status === PAYMENT_STATUS.SUCCESS;
-  }
-
-  // Virtual for canRetry
-  get canRetry() {
-    return this.status === PAYMENT_STATUS.FAILED && this.retryCount < 3;
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      transactionReference: this.transactionReference,
-      user: this.user,
-      order: this.order,
-      subscription: this.subscription,
-      paymentType: this.paymentType,
-      amount: this.amount,
-      currency: this.currency,
-      paymentMethod: this.paymentMethodParsed,
-      status: this.status,
-      providerReference: this.providerReference,
-      providerResponse: this.providerResponseParsed,
-      metadata: this.metadataParsed,
-      refund: this.refundParsed,
-      retryCount: this.retryCount,
-      nextRetryAt: this.nextRetryAt,
-      lastAttemptAt: this.lastAttemptAt,
-      paidAt: this.paidAt,
-      failedAt: this.failedAt,
-      refundedAt: this.refundedAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      formattedAmount: this.formattedAmount,
-      isPaid: this.isPaid,
-      canRetry: this.canRetry,
-    };
-  }
+  return p;
 }
 
-// Payment Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const PaymentModel = {
-  /**
-   * Create a new payment
-   */
-  async create(paymentData) {
-    const repo = await getPaymentRepository();
-
-    const now = new Date();
-    const transactionReference = paymentData.transactionReference || generateTransactionReference();
-
-    const payment = await repo.save({
-      transactionReference,
-      user: paymentData.user,
-      order: paymentData.order,
-      subscription: paymentData.subscription,
-      paymentType: paymentData.paymentType,
-      amount: paymentData.amount,
-      currency: paymentData.currency || 'NGN',
-      paymentMethod: paymentData.paymentMethod ? JSON.stringify(paymentData.paymentMethod) : null,
-      status: paymentData.status || PAYMENT_STATUS.PENDING,
-      providerReference: paymentData.providerReference,
-      providerResponse: paymentData.providerResponse ? JSON.stringify(paymentData.providerResponse) : null,
-      metadata: paymentData.metadata ? JSON.stringify(paymentData.metadata) : null,
-      refund: paymentData.refund ? JSON.stringify(paymentData.refund) : null,
-      retryCount: paymentData.retryCount || 0,
-      nextRetryAt: paymentData.nextRetryAt,
-      lastAttemptAt: paymentData.lastAttemptAt,
-      paidAt: paymentData.paidAt,
-      failedAt: paymentData.failedAt,
-      refundedAt: paymentData.refundedAt,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return payment;
+  async create(data) {
+    const transactionReference = data.transactionReference || generateTransactionReference();
+    const { rows } = await query(
+      `INSERT INTO payments
+         (transaction_reference, user_id, order_id, subscription_id, payment_type,
+          amount, currency, payment_method, status, provider_reference, provider_response,
+          metadata, refund, retry_count, next_retry_at, last_attempt_at, paid_at, failed_at, refunded_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`,
+      [
+        transactionReference,
+        data.user || data.userId,
+        data.order || data.orderId || null,
+        data.subscription || data.subscriptionId || null,
+        data.paymentType,
+        data.amount,
+        data.currency || 'NGN',
+        data.paymentMethod || null,
+        data.status || PAYMENT_STATUS.PENDING,
+        data.providerReference || null,
+        data.providerResponse || null,
+        data.metadata || null,
+        data.refund || null,
+        data.retryCount || 0,
+        data.nextRetryAt || null,
+        data.lastAttemptAt || null,
+        data.paidAt || null,
+        data.failedAt || null,
+        data.refundedAt || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find payment by ID
-   */
   async findById(id) {
-    const repo = await getPaymentRepository();
-    const payment = await repo.fetch(id);
-    if (!payment || !payment.transactionReference) return null;
-    return payment;
+    const { rows } = await query('SELECT * FROM payments WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find payment by transaction reference
-   */
-  async findByTransactionReference(transactionReference) {
-    const repo = await getPaymentRepository();
-    const payment = await repo.search()
-      .where('transactionReference').equals(transactionReference)
-      .return.first();
-    return payment;
+  async findByTransactionReference(ref) {
+    const { rows } = await query('SELECT * FROM payments WHERE transaction_reference=$1', [ref]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update payment by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getPaymentRepository();
-    const payment = await repo.fetch(id);
-    if (!payment || !payment.transactionReference) return null;
-
-    // Serialize complex objects
-    const jsonFields = ['paymentMethod', 'providerResponse', 'metadata', 'refund'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
-
-    // Update fields
-    Object.assign(payment, updateData, { updatedAt: new Date() });
-    await repo.save(payment);
-
-    return options.new !== false ? payment : null;
-  },
-
-  /**
-   * Find payments with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getPaymentRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.order) {
-      search = search.where('order').equals(query.order);
-    }
-    if (query.subscription) {
-      search = search.where('subscription').equals(query.subscription);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-    if (query.paymentType) {
-      search = search.where('paymentType').equals(query.paymentType);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const payments = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return payments;
-  },
-
-  /**
-   * Count payments
-   */
-  async countDocuments(query = {}) {
-    const repo = await getPaymentRepository();
-    let search = repo.search();
-
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-    if (query.paymentType) {
-      search = search.where('paymentType').equals(query.paymentType);
-    }
-
-    return search.return.count();
-  },
-
-  /**
-   * Delete payment (hard delete)
-   */
-  async delete(id) {
-    const repo = await getPaymentRepository();
-    await repo.remove(id);
-  },
-
-  /**
-   * Find payments by user
-   */
-  async findByUser(userId, options = {}) {
-    const repo = await getPaymentRepository();
-    const limit = options.limit || 20;
-
-    return repo.search()
-      .where('user').equals(userId)
-      .sortBy('createdAt', 'DESC')
-      .return.page(0, limit);
-  },
-
-  /**
-   * Find successful payments for user
-   */
-  async findSuccessful(userId) {
-    const repo = await getPaymentRepository();
-    return repo.search()
-      .where('user').equals(userId)
-      .where('status').equals(PAYMENT_STATUS.SUCCESS)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
-  },
-
-  /**
-   * Find payments due for retry
-   */
-  async findDueForRetry() {
-    const repo = await getPaymentRepository();
-    const now = new Date();
-    const payments = await repo.search()
-      .where('status').equals(PAYMENT_STATUS.FAILED)
-      .return.all();
-
-    // Filter by nextRetryAt and retryCount
-    return payments.filter(payment => {
-      return payment.nextRetryAt &&
-        new Date(payment.nextRetryAt) <= now &&
-        payment.retryCount < 3;
-    });
-  },
-
-  /**
-   * Mark payment as successful
-   */
-  async markAsSuccess(id, providerResponse) {
-    const repo = await getPaymentRepository();
-    const payment = await repo.fetch(id);
-    if (!payment || !payment.transactionReference) return null;
-
-    payment.status = PAYMENT_STATUS.SUCCESS;
-    payment.paidAt = new Date();
-    payment.providerReference = providerResponse?.reference || providerResponse?.data?.reference;
-    payment.providerResponse = JSON.stringify(providerResponse);
-    payment.updatedAt = new Date();
-    await repo.save(payment);
-
-    return payment;
-  },
-
-  /**
-   * Mark payment as failed
-   */
-  async markAsFailed(id, providerResponse, scheduleRetry = true) {
-    const repo = await getPaymentRepository();
-    const payment = await repo.fetch(id);
-    if (!payment || !payment.transactionReference) return null;
-
-    payment.status = PAYMENT_STATUS.FAILED;
-    payment.failedAt = new Date();
-    payment.lastAttemptAt = new Date();
-    payment.providerResponse = JSON.stringify(providerResponse);
-
-    if (scheduleRetry && payment.retryCount < 3) {
-      payment.retryCount = (payment.retryCount || 0) + 1;
-      // Schedule retry in 24 hours
-      payment.nextRetryAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    }
-
-    payment.updatedAt = new Date();
-    await repo.save(payment);
-
-    return payment;
-  },
-
-  /**
-   * Process refund
-   */
-  async processRefund(id, amount, reason, refundReference) {
-    const repo = await getPaymentRepository();
-    const payment = await repo.fetch(id);
-    if (!payment || !payment.transactionReference) return null;
-
-    payment.status = PAYMENT_STATUS.REFUNDED;
-    payment.refundedAt = new Date();
-    payment.refund = JSON.stringify({
-      amount: amount || payment.amount,
-      reason,
-      refundedAt: new Date().toISOString(),
-      refundReference,
-    });
-    payment.updatedAt = new Date();
-    await repo.save(payment);
-
-    return payment;
-  },
-
-  /**
-   * Calculate revenue for a date range
-   */
-  async calculateRevenue(startDate, endDate) {
-    const repo = await getPaymentRepository();
-    const payments = await repo.search()
-      .where('status').equals(PAYMENT_STATUS.SUCCESS)
-      .return.all();
-
-    // Filter by paidAt date range and sum
-    const filteredPayments = payments.filter(payment => {
-      if (!payment.paidAt) return false;
-      const paidAt = new Date(payment.paidAt);
-      return paidAt >= startDate && paidAt <= endDate;
-    });
-
-    const totalAmount = filteredPayments.reduce((sum, payment) => sum + (payment.amount || 0), 0);
-
-    return {
-      totalAmount,
-      count: filteredPayments.length,
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      status:            'status',
+      providerReference: 'provider_reference',
+      providerResponse:  'provider_response',
+      metadata:          'metadata',
+      refund:            'refund',
+      retryCount:        'retry_count',
+      nextRetryAt:       'next_retry_at',
+      lastAttemptAt:     'last_attempt_at',
+      paidAt:            'paid_at',
+      failedAt:          'failed_at',
+      refundedAt:        'refunded_at',
     };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+    }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE payments SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
+  },
+
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)         { conds.push(`user_id=$${i++}`);         vals.push(filters.user); }
+    if (filters.order)        { conds.push(`order_id=$${i++}`);        vals.push(filters.order); }
+    if (filters.subscription) { conds.push(`subscription_id=$${i++}`); vals.push(filters.subscription); }
+    if (filters.status)       { conds.push(`status=$${i++}`);          vals.push(filters.status); }
+    if (filters.paymentType)  { conds.push(`payment_type=$${i++}`);    vals.push(filters.paymentType); }
+    const { rows } = await query(
+      `SELECT * FROM payments WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
+  },
+
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)        { conds.push(`user_id=$${i++}`);      vals.push(filters.user); }
+    if (filters.status)      { conds.push(`status=$${i++}`);       vals.push(filters.status); }
+    if (filters.paymentType) { conds.push(`payment_type=$${i++}`); vals.push(filters.paymentType); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM payments WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
+  },
+
+  async delete(id) {
+    await query('DELETE FROM payments WHERE id=$1', [id]);
+  },
+
+  async findByUser(userId, options = {}) {
+    const limit = options.limit || 20;
+    const { rows } = await query(
+      'SELECT * FROM payments WHERE user_id=$1 ORDER BY created_at DESC LIMIT $2', [userId, limit]
+    );
+    return rows.map(format);
+  },
+
+  async findSuccessful(userId) {
+    const { rows } = await query(
+      `SELECT * FROM payments WHERE user_id=$1 AND status='${PAYMENT_STATUS.SUCCESS}' ORDER BY created_at DESC`,
+      [userId]
+    );
+    return rows.map(format);
+  },
+
+  async findDueForRetry() {
+    const { rows } = await query(
+      `SELECT * FROM payments WHERE status='${PAYMENT_STATUS.FAILED}' AND next_retry_at <= NOW() AND retry_count < 3`
+    );
+    return rows.map(format);
+  },
+
+  async markAsSuccess(id, providerResponse) {
+    return this.findByIdAndUpdate(id, {
+      status: PAYMENT_STATUS.SUCCESS,
+      paidAt: new Date(),
+      providerReference: providerResponse?.reference || providerResponse?.data?.reference,
+      providerResponse,
+    });
+  },
+
+  async markAsFailed(id, providerResponse, scheduleRetry = true) {
+    const payment = await this.findById(id);
+    if (!payment) return null;
+    const updates = {
+      status: PAYMENT_STATUS.FAILED,
+      failedAt: new Date(),
+      lastAttemptAt: new Date(),
+      providerResponse,
+    };
+    if (scheduleRetry && payment.retryCount < 3) {
+      updates.retryCount = (payment.retryCount || 0) + 1;
+      updates.nextRetryAt = new Date(Date.now() + 86400000);
+    }
+    return this.findByIdAndUpdate(id, updates);
+  },
+
+  async processRefund(id, amount, reason, refundReference) {
+    const payment = await this.findById(id);
+    if (!payment) return null;
+    return this.findByIdAndUpdate(id, {
+      status: PAYMENT_STATUS.REFUNDED,
+      refundedAt: new Date(),
+      refund: { amount: amount || payment.amount, reason, refundedAt: new Date().toISOString(), refundReference },
+    });
+  },
+
+  async calculateRevenue(startDate, endDate) {
+    const { rows } = await query(
+      `SELECT COALESCE(SUM(amount), 0) AS total, COUNT(*) AS cnt FROM payments
+       WHERE status='${PAYMENT_STATUS.SUCCESS}' AND paid_at >= $1 AND paid_at <= $2`,
+      [startDate, endDate]
+    );
+    return { totalAmount: parseInt(rows[0].total, 10), count: parseInt(rows[0].cnt, 10) };
   },
 };
 

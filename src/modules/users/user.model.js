@@ -1,348 +1,221 @@
-import bcrypt from 'bcryptjs';
-import { v4 as uuidv4 } from 'uuid';
-import { getFirestore } from '../../infrastructure/database/firebase.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { comparePassword } from '../../core/utils/crypto.js';
 import logger from '../../core/logger/index.js';
 
-const COLLECTION = 'users';
 const REDIS_SESSION_PREFIX = 'session:user:';
-const SESSION_TTL = 86400 * 7; // 7 days in seconds
+const SESSION_TTL = 86400 * 7;
 
-/**
- * User Model - Firestore with Redis session caching
- */
+function calculateAge(dob) {
+  if (!dob) return null;
+  const today = new Date();
+  const birth = new Date(dob);
+  let age = today.getFullYear() - birth.getFullYear();
+  const m = today.getMonth() - birth.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < birth.getDate())) age--;
+  return age;
+}
+
+function format(row) {
+  if (!row) return null;
+  const user = {
+    id:                      row.id,
+    entityId:                row.id,
+    fullName:                row.full_name,
+    email:                   row.email,
+    phone:                   row.phone,
+    activationCode:          row.activation_code,
+    isActivated:             row.is_activated,
+    activatedAt:             row.activated_at,
+    status:                  row.status,
+    accountStatus:           row.status, // resolver compatibility alias
+    isOnboarded:             row.is_onboarded,
+    onboardingCompleted:     row.is_onboarded,
+    onboardingStep:          row.onboarding_step,
+    dateOfBirth:             row.date_of_birth,
+    height:                  row.height,
+    heightSource:            row.height_source,
+    gender:                  row.gender,
+    profilePhoto:            row.profile_photo_url,
+    birthdayPackageEligible: row.birthday_package_eligible,
+    failedLoginAttempts:     row.failed_login_attempts,
+    lastLoginAt:             row.last_login_at,
+    createdByAdminId:        row.created_by_admin_id,
+    isDeleted:               row.is_deleted,
+    createdAt:               row.created_at,
+    updatedAt:               row.updated_at,
+    age:                     calculateAge(row.date_of_birth),
+  };
+
+  user.toSafeJSON = () => {
+    const safe = { ...user };
+    delete safe.activationCode;
+    delete safe.failedLoginAttempts;
+    delete safe.toSafeJSON;
+    return safe;
+  };
+
+  return user;
+}
+
 const UserModel = {
-  /**
-   * Create a new user
-   */
-  async create(userData) {
-    const db = getFirestore();
-    const userId = uuidv4();
-    const now = new Date();
-
-    const user = {
-      id: userId,
-      fullName: userData.fullName,
-      email: userData.email?.toLowerCase(),
-      phone: userData.phone,
-      passwordHash: userData.passwordHash || null,
-      activationCode: userData.activationCode || null, // Plain code for email
-      isActivated: userData.isActivated || false,
-      activatedAt: userData.activatedAt || null,
-      dateOfBirth: userData.dateOfBirth || null,
-      gender: userData.gender || null,
-      height: userData.height || null,
-      preferences: userData.preferences || null,
-      profilePhoto: userData.profilePhoto || null,
-      deliveryDetails: userData.deliveryDetails || null,
-      paymentMethods: userData.paymentMethods || [],
-      subscriptionStatus: userData.subscriptionStatus || 'inactive',
-      currentSubscription: userData.currentSubscription || null,
-      accountStatus: userData.accountStatus || 'pending',
-      suspensionReason: userData.suspensionReason || null,
-      onboardingCompleted: userData.onboardingCompleted || false,
-      onboardingStep: userData.onboardingStep || 0,
-      onboardingData: userData.onboardingData || null,
-      birthdayPackageEligible: userData.birthdayPackageEligible || false,
-      lastBirthdayPackage: userData.lastBirthdayPackage || null,
-      lastLoginAt: userData.lastLoginAt || null,
-      loginCount: userData.loginCount || 0,
-      failedLoginAttempts: userData.failedLoginAttempts || 0,
-      lockedUntil: userData.lockedUntil || null,
-      lastPasswordReset: userData.lastPasswordReset || null,
-      isDeleted: false,
-      deletedAt: null,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    try {
-      await db.collection(COLLECTION).doc(userId).set(user);
-      logger.info(`User created: ${user.email} (${userId})`);
-      return this.formatUser(user);
-    } catch (error) {
-      logger.error('Error creating user:', error);
-      throw error;
-    }
+  async create(data) {
+    const { rows } = await query(
+      `INSERT INTO users
+         (full_name, email, phone, activation_code, status, created_by_admin_id)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        data.fullName,
+        data.email?.toLowerCase(),
+        data.phone || null,
+        data.activationCode || null,
+        data.status || 'inactive',
+        data.createdByAdminId || null,
+      ]
+    );
+    logger.info(`User created: ${rows[0].email}`);
+    return format(rows[0]);
   },
 
-
-  /**
-   * Find user by ID
-   */
   async findById(id) {
-    const db = getFirestore();
-
-    try {
-      const doc = await db.collection(COLLECTION).doc(id).get();
-      if (!doc.exists) return null;
-      return this.formatUser(doc.data());
-    } catch (error) {
-      logger.error('Error finding user by ID:', error);
-      throw error;
-    }
+    const { rows } = await query(
+      'SELECT * FROM users WHERE id=$1 AND is_deleted=FALSE', [id]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find user by email
-   */
   async findByEmail(email) {
-    const db = getFirestore();
-
-    try {
-      const snapshot = await db
-        .collection(COLLECTION)
-        .where('email', '==', email.toLowerCase())
-        .limit(1)
-        .get();
-
-      if (snapshot.empty) return null;
-      return this.formatUser(snapshot.docs[0].data());
-    } catch (error) {
-      logger.error('Error finding user by email:', error);
-      throw error;
-    }
+    const { rows } = await query(
+      'SELECT * FROM users WHERE email=$1 AND is_deleted=FALSE',
+      [email.toLowerCase()]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find user by phone
-   */
   async findByPhone(phone) {
-    const db = getFirestore();
-
-    try {
-      const snapshot = await db
-        .collection(COLLECTION)
-        .where('phone', '==', phone)
-        .limit(1)
-        .get();
-
-      if (snapshot.empty) return null;
-      return this.formatUser(snapshot.docs[0].data());
-    } catch (error) {
-      logger.error('Error finding user by phone:', error);
-      throw error;
-    }
+    const { rows } = await query(
+      'SELECT * FROM users WHERE phone=$1 AND is_deleted=FALSE', [phone]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update user
-   */
   async findByIdAndUpdate(id, updates) {
-    const db = getFirestore();
-
-    try {
-      const updateData = {
-        ...updates,
-        updatedAt: new Date(),
-      };
-
-      await db.collection(COLLECTION).doc(id).update(updateData);
-      return this.findById(id);
-    } catch (error) {
-      logger.error('Error updating user:', error);
-      throw error;
+    const colMap = {
+      fullName:                'full_name',
+      email:                   'email',
+      phone:                   'phone',
+      activationCode:          'activation_code',
+      isActivated:             'is_activated',
+      activatedAt:             'activated_at',
+      status:                  'status',
+      accountStatus:           'status',
+      isOnboarded:             'is_onboarded',
+      onboardingCompleted:     'is_onboarded',
+      onboardingStep:          'onboarding_step',
+      dateOfBirth:             'date_of_birth',
+      height:                  'height',
+      heightSource:            'height_source',
+      gender:                  'gender',
+      profilePhotoUrl:         'profile_photo_url',
+      profilePhoto:            'profile_photo_url',
+      birthdayPackageEligible: 'birthday_package_eligible',
+      failedLoginAttempts:     'failed_login_attempts',
+      lastLoginAt:             'last_login_at',
+      isDeleted:               'is_deleted',
+      deletedAt:               'deleted_at',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) {
+        fields.push(`${dbCol}=$${i++}`);
+        values.push(updates[jsKey]);
+      }
     }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE users SET ${fields.join(',')} WHERE id=$${i} AND is_deleted=FALSE RETURNING *`,
+      values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Delete user (soft delete)
-   */
-  async delete(id) {
-    const db = getFirestore();
-
-    try {
-      await db.collection(COLLECTION).doc(id).update({
-        isDeleted: true,
-        deletedAt: new Date(),
-      });
-      logger.info(`User soft-deleted: ${id}`);
-      return true;
-    } catch (error) {
-      logger.error('Error deleting user:', error);
-      throw error;
-    }
-  },
-
-  /**
-   * Find all users with pagination
-   */
   async find(filters = {}, pagination = {}) {
-    const db = getFirestore();
     const { limit = 20, offset = 0 } = pagination;
-
-    try {
-      let query = db.collection(COLLECTION).where('isDeleted', '==', false);
-
-      // Add filters
-      if (filters.accountStatus) {
-        query = query.where('accountStatus', '==', filters.accountStatus);
-      }
-      if (filters.subscriptionStatus) {
-        query = query.where('subscriptionStatus', '==', filters.subscriptionStatus);
-      }
-
-      const snapshot = await query.limit(limit + 1).offset(offset).get();
-      const users = snapshot.docs.map(doc => this.formatUser(doc.data()));
-      
-      return {
-        users,
-        hasMore: snapshot.docs.length > limit,
-      };
-    } catch (error) {
-      logger.error('Error finding users:', error);
-      throw error;
-    }
+    const conds = ['is_deleted=FALSE'];
+    const vals = [];
+    let i = 1;
+    if (filters.status)        { conds.push(`status=$${i++}`);        vals.push(filters.status); }
+    if (filters.accountStatus) { conds.push(`status=$${i++}`);        vals.push(filters.accountStatus); }
+    const { rows } = await query(
+      `SELECT * FROM users WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit + 1, offset]
+    );
+    return { users: rows.slice(0, limit).map(format), hasMore: rows.length > limit };
   },
 
-  /**
-   * Count users
-   */
   async countDocuments(filters = {}) {
-    const db = getFirestore();
-
-    try {
-      let query = db.collection(COLLECTION).where('isDeleted', '==', false);
-
-      if (filters.accountStatus) {
-        query = query.where('accountStatus', '==', filters.accountStatus);
-      }
-
-      const snapshot = await query.count().get();
-      return snapshot.data().count;
-    } catch (error) {
-      logger.error('Error counting users:', error);
-      throw error;
-    }
+    const conds = ['is_deleted=FALSE'];
+    const vals = [];
+    let i = 1;
+    if (filters.status)        { conds.push(`status=$${i++}`);        vals.push(filters.status); }
+    if (filters.accountStatus) { conds.push(`status=$${i++}`);        vals.push(filters.accountStatus); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM users WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Compare activation code (plain string comparison)
-   */
   async compareActivationCode(user, code) {
     if (!user.activationCode) return false;
     return user.activationCode === code;
   },
 
-  /**
-   * Increment failed login attempts
-   */
   async incrementFailedAttempts(user) {
-    return this.findByIdAndUpdate(user.id, {
+    return this.findByIdAndUpdate(user.entityId, {
       failedLoginAttempts: (user.failedLoginAttempts || 0) + 1,
     });
   },
 
-  /**
-   * Reset failed login attempts
-   */
   async resetFailedAttempts(user) {
-    return this.findByIdAndUpdate(user.id, {
-      failedLoginAttempts: 0,
-      lockedUntil: null,
-    });
+    return this.findByIdAndUpdate(user.entityId, { failedLoginAttempts: 0 });
   },
 
-  /**
-   * Check if email exists
-   */
   async emailExists(email) {
-    const user = await this.findByEmail(email);
-    return !!user;
+    return !!(await this.findByEmail(email));
   },
 
-  /**
-   * Check if phone exists
-   */
   async phoneExists(phone) {
-    const user = await this.findByPhone(phone);
-    return !!user;
+    return !!(await this.findByPhone(phone));
   },
 
-  /**
-   * Cache authenticated user in Redis
-   */
+  // Redis session cache
   async cacheAuthenticatedUser(user) {
     try {
       const redis = getRedisClient();
-      const key = `${REDIS_SESSION_PREFIX}${user.id}`;
-      await redis.set(key, JSON.stringify(user), 'EX', SESSION_TTL);
-      logger.info(`User cached in Redis: ${user.email}`);
-    } catch (error) {
-      logger.error('Error caching user in Redis:', error);
-      // Don't throw - caching failure shouldn't break authentication
-    }
+      await redis.set(
+        `${REDIS_SESSION_PREFIX}${user.id}`,
+        JSON.stringify(user.toSafeJSON()),
+        { EX: SESSION_TTL }
+      );
+    } catch { /* non-fatal */ }
   },
 
-  /**
-   * Get cached user from Redis
-   */
   async getCachedUser(userId) {
     try {
       const redis = getRedisClient();
-      const key = `${REDIS_SESSION_PREFIX}${userId}`;
-      const cached = await redis.get(key);
-      if (cached) {
-        return JSON.parse(cached);
-      }
-      return null;
-    } catch (error) {
-      logger.error('Error getting cached user:', error);
-      return null;
-    }
+      const cached = await redis.get(`${REDIS_SESSION_PREFIX}${userId}`);
+      return cached ? JSON.parse(cached) : null;
+    } catch { return null; }
   },
 
-  /**
-   * Clear cached user from Redis
-   */
   async clearCachedUser(userId) {
     try {
       const redis = getRedisClient();
-      const key = `${REDIS_SESSION_PREFIX}${userId}`;
-      await redis.del(key);
-      logger.info(`Cached user cleared: ${userId}`);
-    } catch (error) {
-      logger.error('Error clearing cached user:', error);
-    }
-  },
-
-  /**
-   * Format user for response
-   */
-  formatUser(user) {
-    return {
-      ...user,
-      entityId: user.id, // For backward compatibility
-      age: this.calculateAge(user.dateOfBirth),
-      toSafeJSON: () => this.toSafeJSON(user),
-    };
-  },
-
-  /**
-   * Return user data without sensitive fields
-   */
-  toSafeJSON(user) {
-    const safeUser = { ...user };
-    delete safeUser.passwordHash;
-    delete safeUser.activationCode;
-    delete safeUser.failedLoginAttempts;
-    delete safeUser.lockedUntil;
-    return safeUser;
-  },
-
-  /**
-   * Calculate age from date of birth
-   */
-  calculateAge(dateOfBirth) {
-    if (!dateOfBirth) return null;
-    const today = new Date();
-    const birth = new Date(dateOfBirth);
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-      age--;
-    }
-    return age;
+      await redis.del(`${REDIS_SESSION_PREFIX}${userId}`);
+    } catch { /* non-fatal */ }
   },
 };
 

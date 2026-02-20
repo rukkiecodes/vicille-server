@@ -1,308 +1,181 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 
-// MaterialIssuance Entity class
-class Model {
-  // Get parsed materials
-  get materialsParsed() {
-    return this.materials ? JSON.parse(this.materials) : [];
-  }
+function format(row) {
+  if (!row) return null;
+  const iso = {
+    id:          row.id,
+    entityId:    row.id,
+    job:         row.job_id,
+    jobId:       row.job_id,
+    clientTag:   row.client_tag,
+    issuedTo:    row.issued_to,
+    issuedBy:    row.issued_by,
+    materials:   row.materials || [],
+    status:      row.status,
+    issuedAt:    row.issued_at,
+    receivedAt:  row.received_at,
+    returns:     row.returns || [],
+    losses:      row.losses || [],
+    notes:       row.notes,
+    createdAt:   row.created_at,
+    updatedAt:   row.updated_at,
+  };
 
-  // Get parsed returns
-  get returnsParsed() {
-    return this.returns ? JSON.parse(this.returns) : [];
-  }
+  Object.defineProperties(iso, {
+    totalMaterialCount: { get() { return (this.materials || []).length; }},
+    hasReturns:         { get() { return (this.returns || []).length > 0; }},
+    hasLosses:          { get() { return (this.losses || []).length > 0; }},
+    totalPenalty:       { get() {
+      return (this.losses || []).reduce((s, l) => s + (l.penaltyAmount || 0), 0);
+    }},
+  });
 
-  // Get parsed losses
-  get lossesParsed() {
-    return this.losses ? JSON.parse(this.losses) : [];
-  }
+  iso.toSafeJSON = () => ({
+    ...iso, totalMaterialCount: iso.totalMaterialCount, hasReturns: iso.hasReturns,
+    hasLosses: iso.hasLosses, totalPenalty: iso.totalPenalty,
+  });
 
-  // Virtual for totalMaterialCount
-  get totalMaterialCount() {
-    const materials = this.materialsParsed;
-    return materials?.length || 0;
-  }
-
-  // Virtual for hasReturns
-  get hasReturns() {
-    const returns = this.returnsParsed;
-    return returns && returns.length > 0;
-  }
-
-  // Virtual for hasLosses
-  get hasLosses() {
-    const losses = this.lossesParsed;
-    return losses && losses.length > 0;
-  }
-
-  // Virtual for totalPenalty
-  get totalPenalty() {
-    const losses = this.lossesParsed;
-    if (!losses) return 0;
-    return losses.reduce((sum, loss) => sum + (loss.penaltyAmount || 0), 0);
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      job: this.job,
-      clientTag: this.clientTag,
-      issuedTo: this.issuedTo,
-      issuedBy: this.issuedBy,
-      materials: this.materialsParsed,
-      status: this.status,
-      issuedAt: this.issuedAt,
-      receivedAt: this.receivedAt,
-      returns: this.returnsParsed,
-      losses: this.lossesParsed,
-      notes: this.notes,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      totalMaterialCount: this.totalMaterialCount,
-      hasReturns: this.hasReturns,
-      hasLosses: this.hasLosses,
-      totalPenalty: this.totalPenalty,
-    };
-  }
+  return iso;
 }
 
-// MaterialIssuance Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const MaterialIssuanceModel = {
-  /**
-   * Create a new material issuance
-   */
-  async create(issuanceData) {
-    const repo = await getMaterialIssuanceRepository();
-
-    const now = new Date();
-
-    const issuance = await repo.save({
-      job: issuanceData.job,
-      clientTag: issuanceData.clientTag,
-      issuedTo: issuanceData.issuedTo,
-      issuedBy: issuanceData.issuedBy,
-      materials: issuanceData.materials ? JSON.stringify(issuanceData.materials) : '[]',
-      status: issuanceData.status || 'issued',
-      issuedAt: issuanceData.issuedAt || now,
-      receivedAt: issuanceData.receivedAt,
-      returns: issuanceData.returns ? JSON.stringify(issuanceData.returns) : '[]',
-      losses: issuanceData.losses ? JSON.stringify(issuanceData.losses) : '[]',
-      notes: issuanceData.notes,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return issuance;
+  async create(data) {
+    const { rows } = await query(
+      `INSERT INTO inventory_issuances
+         (job_id, client_tag, issued_to, issued_by, materials, status, issued_at, received_at, returns, losses, notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [
+        data.job || data.jobId,
+        data.clientTag || null,
+        data.issuedTo,
+        data.issuedBy,
+        data.materials || [],
+        data.status || 'issued',
+        data.issuedAt || new Date(),
+        data.receivedAt || null,
+        data.returns || [],
+        data.losses || [],
+        data.notes || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find issuance by ID
-   */
   async findById(id) {
-    const repo = await getMaterialIssuanceRepository();
-    const issuance = await repo.fetch(id);
-    if (!issuance || !issuance.job) return null;
-    return issuance;
+    const { rows } = await query('SELECT * FROM inventory_issuances WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update issuance by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getMaterialIssuanceRepository();
-    const issuance = await repo.fetch(id);
-    if (!issuance || !issuance.job) return null;
-
-    // Serialize complex objects
-    const jsonFields = ['materials', 'returns', 'losses'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      materials:  'materials',
+      status:     'status',
+      receivedAt: 'received_at',
+      returns:    'returns',
+      losses:     'losses',
+      notes:      'notes',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-
-    // Update fields
-    Object.assign(issuance, updateData, { updatedAt: new Date() });
-    await repo.save(issuance);
-
-    return options.new !== false ? issuance : null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE inventory_issuances SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Acknowledge receipt
-   */
   async acknowledgeReceipt(id) {
-    const repo = await getMaterialIssuanceRepository();
-    const issuance = await repo.fetch(id);
-    if (!issuance || !issuance.job) return null;
-
-    issuance.status = 'received';
-    issuance.receivedAt = new Date();
-    issuance.updatedAt = new Date();
-    await repo.save(issuance);
-
-    return issuance;
+    return this.findByIdAndUpdate(id, { status: 'received', receivedAt: new Date() });
   },
 
-  /**
-   * Record return
-   */
   async recordReturn(id, materialId, quantity, reason, receivedBy) {
-    const repo = await getMaterialIssuanceRepository();
-    const issuance = await repo.fetch(id);
-    if (!issuance || !issuance.job) return null;
-
-    const returns = issuance.returnsParsed;
-    returns.push({
-      material: materialId,
-      quantityReturned: quantity,
-      reason,
-      returnedAt: new Date().toISOString(),
-      receivedBy,
-    });
-
-    // Update status
-    const materials = issuance.materialsParsed;
-    const totalIssued = materials.reduce((sum, m) => sum + m.quantityIssued, 0);
-    const totalReturned = returns.reduce((sum, r) => sum + r.quantityReturned, 0);
-
-    if (totalReturned >= totalIssued) {
-      issuance.status = 'fully_returned';
-    } else {
-      issuance.status = 'partially_returned';
-    }
-
-    issuance.returns = JSON.stringify(returns);
-    issuance.updatedAt = new Date();
-    await repo.save(issuance);
-
-    return issuance;
+    const iso = await this.findById(id);
+    if (!iso) return null;
+    const returns = [...(iso.returns || []), {
+      material: materialId, quantityReturned: quantity, reason,
+      returnedAt: new Date().toISOString(), receivedBy,
+    }];
+    const materials = iso.materials || [];
+    const totalIssued   = materials.reduce((s, m) => s + m.quantityIssued, 0);
+    const totalReturned = returns.reduce((s, r) => s + r.quantityReturned, 0);
+    const status = totalReturned >= totalIssued ? 'fully_returned' : 'partially_returned';
+    return this.findByIdAndUpdate(id, { returns, status });
   },
 
-  /**
-   * Record loss
-   */
   async recordLoss(id, materialId, quantity, reason, penaltyAmount = 0) {
-    const repo = await getMaterialIssuanceRepository();
-    const issuance = await repo.fetch(id);
-    if (!issuance || !issuance.job) return null;
-
-    const losses = issuance.lossesParsed;
-    losses.push({
-      material: materialId,
-      quantityLost: quantity,
-      reason,
-      reportedAt: new Date().toISOString(),
-      penaltyAmount,
-    });
-
-    issuance.status = 'lost';
-    issuance.losses = JSON.stringify(losses);
-    issuance.updatedAt = new Date();
-    await repo.save(issuance);
-
-    return issuance;
+    const iso = await this.findById(id);
+    if (!iso) return null;
+    const losses = [...(iso.losses || []), {
+      material: materialId, quantityLost: quantity, reason,
+      reportedAt: new Date().toISOString(), penaltyAmount,
+    }];
+    return this.findByIdAndUpdate(id, { losses, status: 'lost' });
   },
 
-  /**
-   * Find by job
-   */
   async findByJob(jobId) {
-    const repo = await getMaterialIssuanceRepository();
-    const issuance = await repo.search()
-      .where('job').equals(jobId)
-      .return.first();
-    return issuance;
+    const { rows } = await query(
+      'SELECT * FROM inventory_issuances WHERE job_id=$1 LIMIT 1', [jobId]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find by tailor
-   */
   async findByTailor(tailorId, status = null) {
-    const repo = await getMaterialIssuanceRepository();
-    let search = repo.search().where('issuedTo').equals(tailorId);
-
     if (status) {
-      search = search.where('status').equals(status);
+      const { rows } = await query(
+        'SELECT * FROM inventory_issuances WHERE issued_to=$1 AND status=$2 ORDER BY issued_at DESC',
+        [tailorId, status]
+      );
+      return rows.map(format);
     }
-
-    return search.sortBy('issuedAt', 'DESC').return.all();
+    const { rows } = await query(
+      'SELECT * FROM inventory_issuances WHERE issued_to=$1 ORDER BY issued_at DESC', [tailorId]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find pending receipt
-   */
   async findPendingReceipt() {
-    const repo = await getMaterialIssuanceRepository();
-    return repo.search()
-      .where('status').equals('issued')
-      .sortBy('issuedAt', 'ASC')
-      .return.all();
+    const { rows } = await query(
+      `SELECT * FROM inventory_issuances WHERE status='issued' ORDER BY issued_at ASC`
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find all issuances with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getMaterialIssuanceRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.job) {
-      search = search.where('job').equals(query.job);
-    }
-    if (query.clientTag) {
-      search = search.where('clientTag').equals(query.clientTag);
-    }
-    if (query.issuedTo) {
-      search = search.where('issuedTo').equals(query.issuedTo);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const issuances = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return issuances;
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.job)       { conds.push(`job_id=$${i++}`);    vals.push(filters.job); }
+    if (filters.clientTag) { conds.push(`client_tag=$${i++}`); vals.push(filters.clientTag); }
+    if (filters.issuedTo)  { conds.push(`issued_to=$${i++}`); vals.push(filters.issuedTo); }
+    if (filters.status)    { conds.push(`status=$${i++}`);    vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT * FROM inventory_issuances WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Count issuances
-   */
-  async countDocuments(query = {}) {
-    const repo = await getMaterialIssuanceRepository();
-    let search = repo.search();
-
-    if (query.job) {
-      search = search.where('job').equals(query.job);
-    }
-    if (query.issuedTo) {
-      search = search.where('issuedTo').equals(query.issuedTo);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-
-    return search.return.count();
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.job)      { conds.push(`job_id=$${i++}`);    vals.push(filters.job); }
+    if (filters.issuedTo) { conds.push(`issued_to=$${i++}`); vals.push(filters.issuedTo); }
+    if (filters.status)   { conds.push(`status=$${i++}`);    vals.push(filters.status); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM inventory_issuances WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete issuance (hard delete)
-   */
   async delete(id) {
-    const repo = await getMaterialIssuanceRepository();
-    await repo.remove(id);
+    await query('DELETE FROM inventory_issuances WHERE id=$1', [id]);
   },
 };
 

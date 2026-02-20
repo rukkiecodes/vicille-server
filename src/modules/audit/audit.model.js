@@ -1,291 +1,146 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 
-// AuditLog Entity class
-class Model {
-  // Get parsed actor
-  get actorParsed() {
-    return this.actor ? JSON.parse(this.actor) : null;
-  }
-
-  // Get parsed target
-  get targetParsed() {
-    return this.target ? JSON.parse(this.target) : null;
-  }
-
-  // Get parsed changes
-  get changesParsed() {
-    return this.changes ? JSON.parse(this.changes) : null;
-  }
-
-  // Get parsed metadata
-  get metadataParsed() {
-    return this.metadata ? JSON.parse(this.metadata) : null;
-  }
-
-  // Convert to safe JSON
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      eventType: this.eventType,
-      eventCategory: this.eventCategory,
-      actor: this.actorParsed,
-      target: this.targetParsed,
-      changes: this.changesParsed,
-      metadata: this.metadataParsed,
-      description: this.description,
-      severity: this.severity,
-      timestamp: this.timestamp,
-      createdAt: this.createdAt,
-    };
-  }
+function format(row) {
+  if (!row) return null;
+  return {
+    id:            row.id,
+    entityId:      row.id,
+    eventType:     row.event_type,
+    eventCategory: row.event_category,
+    actor:         row.actor,
+    actorId:       row.actor_id,
+    target:        row.target,
+    targetId:      row.target_id,
+    targetType:    row.target_type,
+    changes:       row.changes,
+    metadata:      row.metadata,
+    description:   row.description,
+    severity:      row.severity,
+    timestamp:     row.timestamp,
+    createdAt:     row.created_at,
+  };
 }
 
-// AuditLog Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods
 const AuditLogModel = {
-  /**
-   * Create a new audit log entry
-   */
-  async create(logData) {
-    const repo = await getAuditLogRepository();
-
-    const now = new Date();
-
-    const auditLog = await repo.save({
-      eventType: logData.eventType,
-      eventCategory: logData.eventCategory,
-      actor: logData.actor ? JSON.stringify(logData.actor) : null,
-      actorId: logData.actor?.id,
-      target: logData.target ? JSON.stringify(logData.target) : null,
-      targetId: logData.target?.id,
-      targetType: logData.target?.type,
-      changes: logData.changes ? JSON.stringify(logData.changes) : null,
-      metadata: logData.metadata ? JSON.stringify(logData.metadata) : null,
-      description: logData.description,
-      severity: logData.severity || 'info',
-      timestamp: logData.timestamp || now,
-      createdAt: now,
-    });
-
-    return auditLog;
+  async create(data) {
+    const { rows } = await query(
+      `INSERT INTO audit_logs
+         (event_type, event_category, actor_id, actor, target_id, target_type, target,
+          changes, metadata, description, severity, timestamp)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+      [
+        data.eventType,
+        data.eventCategory || null,
+        data.actor?.id || data.actorId || null,
+        data.actor || null,
+        data.target?.id || data.targetId || null,
+        data.target?.type || data.targetType || null,
+        data.target || null,
+        data.changes || null,
+        data.metadata || null,
+        data.description || null,
+        data.severity || 'info',
+        data.timestamp || new Date(),
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Log an event (alias for create with additional processing)
-   */
-  async logEvent(eventData) {
-    return this.create({
-      eventType: eventData.eventType,
-      eventCategory: eventData.eventCategory,
-      actor: eventData.actor,
-      target: eventData.target,
-      changes: eventData.changes,
-      metadata: eventData.metadata,
-      description: eventData.description,
-      severity: eventData.severity || 'info',
-      timestamp: new Date(),
-    });
+  async logEvent(data) {
+    return this.create({ ...data, timestamp: new Date() });
   },
 
-  /**
-   * Find audit log by ID
-   */
   async findById(id) {
-    const repo = await getAuditLogRepository();
-    const auditLog = await repo.fetch(id);
-    if (!auditLog || !auditLog.eventType) return null;
-    return auditLog;
+    const { rows } = await query('SELECT * FROM audit_logs WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find audit logs by actor
-   */
   async findByActor(actorId, options = {}) {
-    const repo = await getAuditLogRepository();
-    let search = repo.search()
-      .where('actorId').equals(actorId);
-
-    if (options.category) {
-      search = search.where('eventCategory').equals(options.category);
-    }
-
     const limit = options.limit || 100;
-    return search
-      .sortBy('timestamp', 'DESC')
-      .return.page(0, limit);
+    const conds = ['actor_id=$1'];
+    const vals = [actorId];
+    let i = 2;
+    if (options.category) { conds.push(`event_category=$${i++}`); vals.push(options.category); }
+    vals.push(limit);
+    const { rows } = await query(
+      `SELECT * FROM audit_logs WHERE ${conds.join(' AND ')} ORDER BY timestamp DESC LIMIT $${i}`, vals
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find audit logs by target
-   */
   async findByTarget(targetType, targetId, options = {}) {
-    const repo = await getAuditLogRepository();
-    let search = repo.search()
-      .where('targetType').equals(targetType)
-      .where('targetId').equals(targetId);
-
     const limit = options.limit || 50;
-    return search
-      .sortBy('timestamp', 'DESC')
-      .return.page(0, limit);
+    const { rows } = await query(
+      'SELECT * FROM audit_logs WHERE target_type=$1 AND target_id=$2 ORDER BY timestamp DESC LIMIT $3',
+      [targetType, targetId, limit]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find audit logs by event type
-   */
   async findByEventType(eventType, options = {}) {
-    const repo = await getAuditLogRepository();
-    let search = repo.search()
-      .where('eventType').equals(eventType);
-
     const limit = options.limit || 100;
-    return search
-      .sortBy('timestamp', 'DESC')
-      .return.page(0, limit);
+    const { rows } = await query(
+      'SELECT * FROM audit_logs WHERE event_type=$1 ORDER BY timestamp DESC LIMIT $2',
+      [eventType, limit]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find critical audit logs
-   */
   async findCritical(startDate, endDate) {
-    const repo = await getAuditLogRepository();
-    const logs = await repo.search()
-      .where('severity').equals('critical')
-      .sortBy('timestamp', 'DESC')
-      .return.all();
-
-    // Filter by date range in memory (Redis OM date range queries are limited)
-    return logs.filter(log => {
-      const timestamp = new Date(log.timestamp);
-      return timestamp >= startDate && timestamp <= endDate;
-    });
+    const { rows } = await query(
+      `SELECT * FROM audit_logs WHERE severity='critical' AND timestamp >= $1 AND timestamp <= $2
+       ORDER BY timestamp DESC`,
+      [startDate, endDate]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Get activity summary for an actor
-   */
   async getActivitySummary(actorId, startDate, endDate) {
-    const repo = await getAuditLogRepository();
-    const logs = await repo.search()
-      .where('actorId').equals(actorId)
-      .return.all();
-
-    // Filter by date range and group by category
-    const filteredLogs = logs.filter(log => {
-      const timestamp = new Date(log.timestamp);
-      return timestamp >= startDate && timestamp <= endDate;
-    });
-
+    const { rows } = await query(
+      `SELECT event_category, COUNT(*) AS cnt FROM audit_logs
+       WHERE actor_id=$1 AND timestamp >= $2 AND timestamp <= $3
+       GROUP BY event_category`,
+      [actorId, startDate, endDate]
+    );
     const summary = {};
-    for (const log of filteredLogs) {
-      if (!summary[log.eventCategory]) {
-        summary[log.eventCategory] = 0;
-      }
-      summary[log.eventCategory]++;
-    }
-
+    for (const r of rows) { summary[r.event_category] = parseInt(r.cnt, 10); }
     return summary;
   },
 
-  /**
-   * Update audit log by ID (Note: Audit logs are typically immutable)
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getAuditLogRepository();
-    const auditLog = await repo.fetch(id);
-    if (!auditLog || !auditLog.eventType) return null;
-
-    const jsonFields = ['actor', 'target', 'changes', 'metadata'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
-
-    // Update extracted fields if parent objects change
-    if (updateData.actor) {
-      const actorObj = typeof updateData.actor === 'string'
-        ? JSON.parse(updateData.actor)
-        : updateData.actor;
-      updateData.actorId = actorObj.id;
-    }
-    if (updateData.target) {
-      const targetObj = typeof updateData.target === 'string'
-        ? JSON.parse(updateData.target)
-        : updateData.target;
-      updateData.targetId = targetObj.id;
-      updateData.targetType = targetObj.type;
-    }
-
-    Object.assign(auditLog, updateData);
-    await repo.save(auditLog);
-
-    return options.new !== false ? auditLog : null;
+  async find(filters = {}, options = {}) {
+    const { limit = 100, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.eventType)     { conds.push(`event_type=$${i++}`);     vals.push(filters.eventType); }
+    if (filters.eventCategory) { conds.push(`event_category=$${i++}`); vals.push(filters.eventCategory); }
+    const actorId = filters.actorId || filters['actor.id'];
+    if (actorId)               { conds.push(`actor_id=$${i++}`);       vals.push(actorId); }
+    const targetId = filters.targetId || filters['target.id'];
+    if (targetId)              { conds.push(`target_id=$${i++}`);      vals.push(targetId); }
+    if (filters.severity)      { conds.push(`severity=$${i++}`);       vals.push(filters.severity); }
+    const { rows } = await query(
+      `SELECT * FROM audit_logs WHERE ${conds.join(' AND ')} ORDER BY timestamp DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Find audit logs with filters
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getAuditLogRepository();
-    let search = repo.search();
-
-    if (query.eventType) {
-      search = search.where('eventType').equals(query.eventType);
-    }
-    if (query.eventCategory) {
-      search = search.where('eventCategory').equals(query.eventCategory);
-    }
-    if (query.actorId || query['actor.id']) {
-      search = search.where('actorId').equals(query.actorId || query['actor.id']);
-    }
-    if (query.targetId || query['target.id']) {
-      search = search.where('targetId').equals(query.targetId || query['target.id']);
-    }
-    if (query.severity) {
-      search = search.where('severity').equals(query.severity);
-    }
-
-    const page = options.page || 1;
-    const limit = options.limit || 100;
-    const offset = (page - 1) * limit;
-
-    return search
-      .sortBy('timestamp', 'DESC')
-      .return.page(offset, limit);
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.eventType)     { conds.push(`event_type=$${i++}`);     vals.push(filters.eventType); }
+    if (filters.eventCategory) { conds.push(`event_category=$${i++}`); vals.push(filters.eventCategory); }
+    const actorId = filters.actorId || filters['actor.id'];
+    if (actorId)               { conds.push(`actor_id=$${i++}`);       vals.push(actorId); }
+    if (filters.severity)      { conds.push(`severity=$${i++}`);       vals.push(filters.severity); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM audit_logs WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Count audit logs
-   */
-  async countDocuments(query = {}) {
-    const repo = await getAuditLogRepository();
-    let search = repo.search();
-
-    if (query.eventType) {
-      search = search.where('eventType').equals(query.eventType);
-    }
-    if (query.eventCategory) {
-      search = search.where('eventCategory').equals(query.eventCategory);
-    }
-    if (query.actorId || query['actor.id']) {
-      search = search.where('actorId').equals(query.actorId || query['actor.id']);
-    }
-    if (query.severity) {
-      search = search.where('severity').equals(query.severity);
-    }
-
-    return search.return.count();
-  },
-
-  /**
-   * Delete audit log
-   */
   async delete(id) {
-    const repo = await getAuditLogRepository();
-    await repo.remove(id);
+    await query('DELETE FROM audit_logs WHERE id=$1', [id]);
   },
 };
 

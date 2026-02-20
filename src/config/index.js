@@ -5,7 +5,7 @@ import { fileURLToPath } from 'url';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-// Load environment variables (only if not already loaded)
+// Load environment variables
 if (process.env.NODE_ENV !== 'production') {
   dotenv.config({ path: path.resolve(__dirname, '../../.env') });
 }
@@ -24,7 +24,20 @@ const config = {
     apiVersion: process.env.API_VERSION || 'v1',
   },
 
-  // Redis
+  // Supabase / PostgreSQL (primary DB)
+  database: {
+    host: process.env.SUPERBASE_POOL_HOST,
+    port: parseInt(process.env.SUPERBASE_POOL_PORT, 10) || 5432,
+    database: process.env.SUPERBASE_POOL_DATABASE || 'postgres',
+    user: process.env.SUPERBASE_POOL_USER,
+    password: process.env.SUPERBASE_DB_PASSWORD,
+    ssl: { rejectUnauthorized: false }, // required for Supabase
+    max: 10,          // max pool connections
+    idleTimeoutMillis: 30000,
+    connectionTimeoutMillis: 10000,
+  },
+
+  // Redis (caching only)
   redis: {
     url: process.env.REDIS_URL || 'redis://localhost:6379',
   },
@@ -37,19 +50,23 @@ const config = {
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d',
   },
 
-  // Activation Code
+  // Activation Code (6-digit, admin-generated, open-ended)
   activationCode: {
-    length: parseInt(process.env.ACTIVATION_CODE_LENGTH, 10) || 8,
-    expiryDays: parseInt(process.env.ACTIVATION_CODE_EXPIRY_DAYS, 10) || 365,
+    length: parseInt(process.env.ACTIVATION_CODE_LENGTH, 10) || 6,
+  },
+
+  // Tailor Reset Token
+  resetToken: {
+    expiryMinutes: 15,
   },
 
   // Email (SMTP)
   email: {
-    host: process.env.SMTP_HOST || 'smtp.titan.email', // Will use Titan
-    port: parseInt(process.env.SMTP_PORT, 10) || 465, // Will use 465
-    secure: process.env.SMTP_SECURE === 'true', // Will be true
-    user: process.env.MAILING_EMAIL || process.env.SMTP_USER, // Will use hello@vicelleclothing.com
-    password: process.env.MAILING_PASSWORD || process.env.SMTP_PASSWORD, // Will use the Titan password
+    host: process.env.SMTP_HOST || 'smtp.titan.email',
+    port: parseInt(process.env.SMTP_PORT, 10) || 465,
+    secure: process.env.SMTP_SECURE === 'true',
+    user: process.env.MAILING_EMAIL || process.env.SMTP_USER,
+    password: process.env.MAILING_PASSWORD || process.env.SMTP_PASSWORD,
     from: process.env.EMAIL_FROM || 'Vicelle Clothing <hello@vicelleclothing.com>',
   },
 
@@ -68,12 +85,12 @@ const config = {
     cloudName: process.env.CLOUDINARY_CLOUD_NAME,
     apiKey: process.env.CLOUDINARY_API_KEY,
     apiSecret: process.env.CLOUDINARY_API_SECRET,
-    maxFileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5242880, // 5MB
+    maxFileSize: parseInt(process.env.MAX_FILE_SIZE, 10) || 5242880,
   },
 
   // Rate Limiting
   rateLimit: {
-    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000, // 15 minutes
+    windowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS, 10) || 900000,
     maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS, 10) || 100,
   },
 
@@ -118,15 +135,21 @@ const config = {
     maxMissedDeadlines: parseInt(process.env.MAX_MISSED_DEADLINES, 10) || 3,
   },
 
+  // Style Search
+  styleSearch: {
+    serpApiKey: process.env.SERP_API_KEY,
+  },
+
   // Pagination
   pagination: {
     defaultLimit: parseInt(process.env.PAGINATION_DEFAULT_LIMIT, 10) || 20,
     maxLimit: parseInt(process.env.PAGINATION_MAX_LIMIT, 10) || 100,
   },
 
-  // Session
+  // Session (Redis TTL)
   session: {
     timeoutMinutes: parseInt(process.env.SESSION_TIMEOUT_MINUTES, 10) || 60,
+    ttlSeconds: 86400 * 7, // 7 days
   },
 
   // CORS
@@ -136,26 +159,33 @@ const config = {
   },
 };
 
-// Validation function
 export const validateConfig = () => {
-  const requiredVars = [];
   const errors = [];
 
-  // In production, require certain variables
   if (config.isProd) {
-    requiredVars.push(
+    const required = [
       'JWT_SECRET',
       'JWT_REFRESH_SECRET',
       'REDIS_URL',
       'MAILING_EMAIL',
-      'MAILING_PASSWORD'
-    );
+      'MAILING_PASSWORD',
+      'SUPERBASE_DB_PASSWORD',
+      'SUPERBASE_POOL_HOST',
+      'SUPERBASE_POOL_USER',
+    ];
+    for (const v of required) {
+      if (!process.env[v]) errors.push(`Missing required env var: ${v}`);
+    }
   }
 
-  for (const varName of requiredVars) {
-    if (!process.env[varName]) {
-      errors.push(`Missing required environment variable: ${varName}`);
-    }
+  // Always warn in dev if DB password is placeholder
+  if (
+    config.database.password === 'your-supabase-db-password-here' ||
+    !config.database.password
+  ) {
+    console.warn(
+      '\x1b[33m⚠️  SUPERBASE_DB_PASSWORD is not set. Update it in .env before connecting to the database.\x1b[0m'
+    );
   }
 
   if (errors.length > 0) {

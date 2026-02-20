@@ -1,274 +1,169 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { generateSku } from '../../core/utils/randomCode.js';
 
-// Accessory Entity class
-class Model {
-  // Get parsed images
-  get imagesParsed() {
-    return this.images ? JSON.parse(this.images) : [];
-  }
+function format(row) {
+  if (!row) return null;
+  const a = {
+    id:           row.id,
+    entityId:     row.id,
+    name:         row.name,
+    sku:          row.sku,
+    category:     row.category,
+    description:  row.description,
+    images:       row.images || [],
+    variants:     row.variants || [],
+    basePrice:    row.base_price,
+    currency:     row.currency,
+    isActive:     row.is_active,
+    displayOrder: row.display_order,
+    createdAt:    row.created_at,
+    updatedAt:    row.updated_at,
+  };
 
-  // Get parsed variants
-  get variantsParsed() {
-    return this.variants ? JSON.parse(this.variants) : [];
-  }
+  Object.defineProperties(a, {
+    primaryImage: { get() {
+      if (!this.images?.length) return null;
+      return this.images.find(img => img.isPrimary) || this.images[0];
+    }},
+    totalStock: { get() {
+      return (this.variants || []).reduce((sum, v) => sum + (v.quantityInStock || 0), 0);
+    }},
+    isInStock: { get() { return this.totalStock > 0; }},
+    formattedPrice: { get() { return `₦${(this.basePrice / 100).toLocaleString()}`; }},
+  });
 
-  // Virtual for primary image
-  get primaryImage() {
-    const images = this.imagesParsed;
-    if (!images || images.length === 0) return null;
-    return images.find((img) => img.isPrimary) || images[0];
-  }
+  a.getVariant = (variantSku) => (a.variants || []).find(v => v.sku === variantSku);
+  a.checkVariantStock = (variantSku, qty) => {
+    const v = a.getVariant(variantSku);
+    return v ? v.quantityInStock >= qty : false;
+  };
+  a.toSafeJSON = () => ({
+    ...a, primaryImage: a.primaryImage, totalStock: a.totalStock,
+    isInStock: a.isInStock, formattedPrice: a.formattedPrice,
+  });
 
-  // Virtual for total stock
-  get totalStock() {
-    const variants = this.variantsParsed;
-    if (!variants || variants.length === 0) return 0;
-    return variants.reduce((sum, v) => sum + v.quantityInStock, 0);
-  }
-
-  // Virtual for isInStock
-  get isInStock() {
-    return this.totalStock > 0;
-  }
-
-  // Virtual for formattedPrice
-  get formattedPrice() {
-    const amount = this.basePrice / 100;
-    return `₦${amount.toLocaleString()}`;
-  }
-
-  // Get variant by SKU
-  getVariant(variantSku) {
-    const variants = this.variantsParsed;
-    return variants.find((v) => v.sku === variantSku);
-  }
-
-  // Check variant stock
-  checkVariantStock(variantSku, quantity) {
-    const variant = this.getVariant(variantSku);
-    if (!variant) return false;
-    return variant.quantityInStock >= quantity;
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      name: this.name,
-      sku: this.sku,
-      category: this.category,
-      description: this.description,
-      images: this.imagesParsed,
-      variants: this.variantsParsed,
-      basePrice: this.basePrice,
-      currency: this.currency,
-      isActive: this.isActive,
-      displayOrder: this.displayOrder,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      primaryImage: this.primaryImage,
-      totalStock: this.totalStock,
-      isInStock: this.isInStock,
-      formattedPrice: this.formattedPrice,
-    };
-  }
+  return a;
 }
 
-// Accessory Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const AccessoryModel = {
-  /**
-   * Create a new accessory
-   */
-  async create(accessoryData) {
-    const repo = await getAccessoryRepository();
-
-    const now = new Date();
-    const sku = accessoryData.sku || generateSku('ACC');
-
-    const accessory = await repo.save({
-      name: accessoryData.name,
-      sku,
-      category: accessoryData.category,
-      description: accessoryData.description,
-      images: accessoryData.images ? JSON.stringify(accessoryData.images) : '[]',
-      variants: accessoryData.variants ? JSON.stringify(accessoryData.variants) : '[]',
-      basePrice: accessoryData.basePrice,
-      currency: accessoryData.currency || 'NGN',
-      isActive: accessoryData.isActive ?? true,
-      displayOrder: accessoryData.displayOrder || 0,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return accessory;
-  },
-
-  /**
-   * Find accessory by ID
-   */
-  async findById(id) {
-    const repo = await getAccessoryRepository();
-    const accessory = await repo.fetch(id);
-    if (!accessory || !accessory.sku) return null;
-    return accessory;
-  },
-
-  /**
-   * Find accessory by SKU
-   */
-  async findBySku(sku) {
-    const repo = await getAccessoryRepository();
-    const accessory = await repo.search()
-      .where('sku').equals(sku)
-      .return.first();
-    return accessory;
-  },
-
-  /**
-   * Update accessory by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getAccessoryRepository();
-    const accessory = await repo.fetch(id);
-    if (!accessory || !accessory.sku) return null;
-
-    // Serialize complex objects
-    if (updateData.images && typeof updateData.images === 'object') {
-      updateData.images = JSON.stringify(updateData.images);
-    }
-    if (updateData.variants && typeof updateData.variants === 'object') {
-      updateData.variants = JSON.stringify(updateData.variants);
-    }
-
-    // Update fields
-    Object.assign(accessory, updateData, { updatedAt: new Date() });
-    await repo.save(accessory);
-
-    return options.new !== false ? accessory : null;
-  },
-
-  /**
-   * Deduct variant stock
-   */
-  async deductVariantStock(id, variantSku, quantity) {
-    const repo = await getAccessoryRepository();
-    const accessory = await repo.fetch(id);
-    if (!accessory || !accessory.sku) return null;
-
-    const variants = accessory.variantsParsed;
-    const variant = variants.find((v) => v.sku === variantSku);
-
-    if (!variant) {
-      throw new Error('Variant not found');
-    }
-    if (variant.quantityInStock < quantity) {
-      throw new Error('Insufficient stock');
-    }
-
-    variant.quantityInStock -= quantity;
-    accessory.variants = JSON.stringify(variants);
-    accessory.updatedAt = new Date();
-    await repo.save(accessory);
-
-    return accessory;
-  },
-
-  /**
-   * Find by category
-   */
-  async findByCategory(category) {
-    const repo = await getAccessoryRepository();
-    return repo.search()
-      .where('category').equals(category)
-      .where('isActive').equals(true)
-      .sortBy('displayOrder', 'ASC')
-      .return.all();
-  },
-
-  /**
-   * Find in stock
-   */
-  async findInStock() {
-    const repo = await getAccessoryRepository();
-    const accessories = await repo.search()
-      .where('isActive').equals(true)
-      .sortBy('displayOrder', 'ASC')
-      .return.all();
-
-    // Filter for accessories with stock
-    return accessories.filter(a => a.totalStock > 0);
-  },
-
-  /**
-   * Search accessories
-   */
-  async search(query) {
-    const repo = await getAccessoryRepository();
-    const accessories = await repo.search()
-      .where('isActive').equals(true)
-      .return.all();
-
-    // Filter by search query (name, description, sku)
-    const regex = new RegExp(query, 'i');
-    return accessories.filter(a =>
-      regex.test(a.name) || regex.test(a.description) || regex.test(a.sku)
+  async create(data) {
+    const sku = data.sku || generateSku('ACC');
+    const { rows } = await query(
+      `INSERT INTO accessories
+         (name, sku, category, description, images, variants, base_price, currency, is_active, display_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
+      [
+        data.name,
+        sku,
+        data.category || null,
+        data.description || null,
+        data.images || [],
+        data.variants || [],
+        data.basePrice,
+        data.currency || 'NGN',
+        data.isActive !== false,
+        data.displayOrder || 0,
+      ]
     );
+    return format(rows[0]);
   },
 
-  /**
-   * Find all accessories with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getAccessoryRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.category) {
-      search = search.where('category').equals(query.category);
-    }
-    if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const accessories = await search
-      .sortBy('displayOrder', 'ASC')
-      .return.page(offset, limit);
-
-    return accessories;
+  async findById(id) {
+    const { rows } = await query('SELECT * FROM accessories WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Count accessories
-   */
-  async countDocuments(query = {}) {
-    const repo = await getAccessoryRepository();
-    let search = repo.search();
-
-    if (query.category) {
-      search = search.where('category').equals(query.category);
-    }
-    if (query.isActive !== undefined) {
-      search = search.where('isActive').equals(query.isActive);
-    }
-
-    return search.return.count();
+  async findBySku(sku) {
+    const { rows } = await query('SELECT * FROM accessories WHERE sku=$1', [sku]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Delete accessory (hard delete)
-   */
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      name:         'name',
+      category:     'category',
+      description:  'description',
+      images:       'images',
+      variants:     'variants',
+      basePrice:    'base_price',
+      currency:     'currency',
+      isActive:     'is_active',
+      displayOrder: 'display_order',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+    }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE accessories SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
+  },
+
+  async deductVariantStock(id, variantSku, quantity) {
+    const accessory = await this.findById(id);
+    if (!accessory) return null;
+    const variants = [...(accessory.variants || [])];
+    const idx = variants.findIndex(v => v.sku === variantSku);
+    if (idx === -1) throw new Error('Variant not found');
+    if (variants[idx].quantityInStock < quantity) throw new Error('Insufficient stock');
+    variants[idx] = { ...variants[idx], quantityInStock: variants[idx].quantityInStock - quantity };
+    return this.findByIdAndUpdate(id, { variants });
+  },
+
+  async findByCategory(category) {
+    const { rows } = await query(
+      'SELECT * FROM accessories WHERE category=$1 AND is_active=TRUE ORDER BY display_order ASC', [category]
+    );
+    return rows.map(format);
+  },
+
+  async findInStock() {
+    const { rows } = await query(
+      'SELECT * FROM accessories WHERE is_active=TRUE ORDER BY display_order ASC'
+    );
+    return rows.map(format).filter(a => a.totalStock > 0);
+  },
+
+  async search(searchQuery) {
+    const { rows } = await query(
+      `SELECT * FROM accessories WHERE is_active=TRUE
+       AND (name ILIKE $1 OR description ILIKE $1 OR sku ILIKE $1)`,
+      [`%${searchQuery}%`]
+    );
+    return rows.map(format);
+  },
+
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.category)               { conds.push(`category=$${i++}`);  vals.push(filters.category); }
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`); vals.push(filters.isActive); }
+    const { rows } = await query(
+      `SELECT * FROM accessories WHERE ${conds.join(' AND ')} ORDER BY display_order ASC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
+  },
+
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.category)               { conds.push(`category=$${i++}`);  vals.push(filters.category); }
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`); vals.push(filters.isActive); }
+    const { rows } = await query(`SELECT COUNT(*) AS cnt FROM accessories WHERE ${conds.join(' AND ')}`, vals);
+    return parseInt(rows[0].cnt, 10);
+  },
+
   async delete(id) {
-    const repo = await getAccessoryRepository();
-    await repo.remove(id);
+    await query('DELETE FROM accessories WHERE id=$1', [id]);
   },
 };
 

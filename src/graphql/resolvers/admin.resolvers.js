@@ -5,6 +5,8 @@ import TailorModel from '../../modules/tailors/tailor.model.js';
 import OrderModel from '../../modules/orders/order.model.js';
 import SubscriptionModel from '../../modules/subscriptions/subscription.model.js';
 import { requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
+import { generateActivationCode } from '../../core/utils/randomCode.js';
+import emailService from '../../services/email.service.js';
 import logger from '../../core/logger/index.js';
 
 const adminResolvers = {
@@ -119,30 +121,56 @@ const adminResolvers = {
       return { success: true, message: 'Admin deleted' };
     },
 
+    createClientAccount: async (_, { email, fullName, phone }, context) => {
+      requireAdmin(context);
+
+      const existing = await UserModel.findByEmail(email);
+      if (existing) {
+        throw new GraphQLError('A client account with this email already exists', {
+          extensions: { code: 'CONFLICT' },
+        });
+      }
+
+      const passcode = generateActivationCode(); // 6-digit numeric code
+      const user = await UserModel.create({
+        email,
+        fullName,
+        phone: phone || null,
+        activationCode: passcode,
+        status: 'inactive',
+        createdByAdminId: context.user.id,
+      });
+
+      try {
+        await emailService.sendActivationCodeEmail(email, fullName, passcode);
+      } catch (emailError) {
+        logger.error('createClientAccount: failed to send invite email:', emailError);
+      }
+
+      logger.info(`Client account created by admin ${context.user.id}: ${email}`);
+
+      return {
+        success:  true,
+        message:  'Client account created. Passcode sent via email.',
+        user:     entityToJSON(user),
+        passcode,
+      };
+    },
+
     suspendUser: async (_, { userId, reason }, context) => {
       requireAdmin(context);
-      const user = await UserModel.findByIdAndUpdate(userId, {
-        accountStatus: 'suspended',
-        suspensionReason: reason,
-      }, { new: true });
+      const user = await UserModel.findByIdAndUpdate(userId, { accountStatus: 'suspended' });
       if (!user) {
-        throw new GraphQLError('User not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
+        throw new GraphQLError('User not found', { extensions: { code: 'NOT_FOUND' } });
       }
       return entityToJSON(user);
     },
 
     reactivateUser: async (_, { userId }, context) => {
       requireAdmin(context);
-      const user = await UserModel.findByIdAndUpdate(userId, {
-        accountStatus: 'active',
-        suspensionReason: null,
-      }, { new: true });
+      const user = await UserModel.findByIdAndUpdate(userId, { accountStatus: 'active' });
       if (!user) {
-        throw new GraphQLError('User not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
+        throw new GraphQLError('User not found', { extensions: { code: 'NOT_FOUND' } });
       }
       return entityToJSON(user);
     },

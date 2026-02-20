@@ -1,351 +1,204 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 
-// Subscription Entity class
-class Model {
-  // Get parsed billing object
-  get billingParsed() {
-    return this.billing ? JSON.parse(this.billing) : null;
-  }
+function format(row) {
+  if (!row) return null;
+  const s = {
+    id:              row.id,
+    entityId:        row.id,
+    user:            row.user_id,
+    userId:          row.user_id,
+    plan:            row.plan_id,
+    planId:          row.plan_id,
+    status:          row.status,
+    billing:         row.billing,
+    currentCycle:    row.current_cycle,
+    paymentStatus:   row.payment_status,
+    gracePeriodEnds: row.grace_period_ends,
+    startDate:       row.start_date,
+    endDate:         row.end_date,
+    renewalEnabled:  row.renewal_enabled,
+    cancellation:    row.cancellation,
+    createdAt:       row.created_at,
+    updatedAt:       row.updated_at,
+  };
 
-  // Get parsed current cycle object
-  get currentCycleParsed() {
-    return this.currentCycle ? JSON.parse(this.currentCycle) : null;
-  }
+  Object.defineProperties(s, {
+    isActive: { get() {
+      return this.status === 'active' && this.paymentStatus !== 'overdue';
+    }},
+    isStylingWindowOpen: { get() {
+      const cc = this.currentCycle;
+      if (!cc) return false;
+      const now = new Date();
+      return cc.stylingWindowOpen && cc.stylingWindowClose &&
+        now >= new Date(cc.stylingWindowOpen) && now <= new Date(cc.stylingWindowClose);
+    }},
+    daysUntilNextBilling: { get() {
+      if (!this.billing?.nextBillingDate) return null;
+      return Math.ceil((new Date(this.billing.nextBillingDate) - new Date()) / 86400000);
+    }},
+    isInGracePeriod: { get() {
+      return this.gracePeriodEnds ? new Date() <= new Date(this.gracePeriodEnds) : false;
+    }},
+  });
 
-  // Get parsed cancellation object
-  get cancellationParsed() {
-    return this.cancellation ? JSON.parse(this.cancellation) : null;
-  }
+  s.toSafeJSON = () => ({
+    id: s.entityId, user: s.user, plan: s.plan, status: s.status,
+    billing: s.billing, currentCycle: s.currentCycle, paymentStatus: s.paymentStatus,
+    gracePeriodEnds: s.gracePeriodEnds, startDate: s.startDate, endDate: s.endDate,
+    renewalEnabled: s.renewalEnabled, cancellation: s.cancellation,
+    createdAt: s.createdAt, updatedAt: s.updatedAt,
+    isActive: s.isActive, isStylingWindowOpen: s.isStylingWindowOpen,
+    daysUntilNextBilling: s.daysUntilNextBilling, isInGracePeriod: s.isInGracePeriod,
+  });
 
-  // Virtual for isActive
-  get isActive() {
-    return this.status === 'active' && this.paymentStatus !== 'overdue';
-  }
-
-  // Virtual for isStylingWindowOpen
-  get isStylingWindowOpen() {
-    const currentCycle = this.currentCycleParsed;
-    if (!currentCycle) return false;
-    const now = new Date();
-    return (
-      currentCycle.stylingWindowOpen &&
-      currentCycle.stylingWindowClose &&
-      now >= new Date(currentCycle.stylingWindowOpen) &&
-      now <= new Date(currentCycle.stylingWindowClose)
-    );
-  }
-
-  // Virtual for daysUntilNextBilling
-  get daysUntilNextBilling() {
-    const billing = this.billingParsed;
-    if (!billing || !billing.nextBillingDate) {
-      return null;
-    }
-    const now = new Date();
-    const diff = new Date(billing.nextBillingDate) - now;
-    return Math.ceil(diff / (1000 * 60 * 60 * 24));
-  }
-
-  // Virtual for isInGracePeriod
-  get isInGracePeriod() {
-    if (!this.gracePeriodEnds) {
-      return false;
-    }
-    return new Date() <= new Date(this.gracePeriodEnds);
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      user: this.user,
-      plan: this.plan,
-      status: this.status,
-      billing: this.billingParsed,
-      currentCycle: this.currentCycleParsed,
-      paymentStatus: this.paymentStatus,
-      gracePeriodEnds: this.gracePeriodEnds,
-      startDate: this.startDate,
-      endDate: this.endDate,
-      renewalEnabled: this.renewalEnabled,
-      cancellation: this.cancellationParsed,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isActive: this.isActive,
-      isStylingWindowOpen: this.isStylingWindowOpen,
-      daysUntilNextBilling: this.daysUntilNextBilling,
-      isInGracePeriod: this.isInGracePeriod,
-    };
-  }
+  return s;
 }
 
-// Subscription Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const SubscriptionModel = {
-  /**
-   * Create a new subscription
-   */
-  async create(subscriptionData) {
-    const repo = await getSubscriptionRepository();
-
-    const now = new Date();
-
-    const subscription = await repo.save({
-      user: subscriptionData.user,
-      plan: subscriptionData.plan,
-      status: subscriptionData.status || 'active',
-      billing: subscriptionData.billing ? JSON.stringify(subscriptionData.billing) : null,
-      currentCycle: subscriptionData.currentCycle ? JSON.stringify(subscriptionData.currentCycle) : null,
-      paymentStatus: subscriptionData.paymentStatus || 'pending',
-      gracePeriodEnds: subscriptionData.gracePeriodEnds,
-      startDate: subscriptionData.startDate || now,
-      endDate: subscriptionData.endDate,
-      renewalEnabled: subscriptionData.renewalEnabled !== false,
-      cancellation: subscriptionData.cancellation ? JSON.stringify(subscriptionData.cancellation) : null,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return subscription;
+  async create(data) {
+    const { rows } = await query(
+      `INSERT INTO user_subscriptions
+         (user_id, plan_id, status, billing, current_cycle, payment_status,
+          grace_period_ends, start_date, end_date, renewal_enabled, cancellation)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [
+        data.user || data.userId,
+        data.plan || data.planId,
+        data.status || 'active',
+        data.billing || null,
+        data.currentCycle || null,
+        data.paymentStatus || 'pending',
+        data.gracePeriodEnds || null,
+        data.startDate || new Date(),
+        data.endDate || null,
+        data.renewalEnabled !== false,
+        data.cancellation || null,
+      ]
+    );
+    return format(rows[0]);
   },
 
-  /**
-   * Find subscription by ID
-   */
   async findById(id) {
-    const repo = await getSubscriptionRepository();
-    const subscription = await repo.fetch(id);
-    if (!subscription || !subscription.user) return null;
-    return subscription;
+    const { rows } = await query('SELECT * FROM user_subscriptions WHERE id=$1', [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update subscription by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getSubscriptionRepository();
-    const subscription = await repo.fetch(id);
-    if (!subscription || !subscription.user) return null;
-
-    // Serialize complex objects
-    const jsonFields = ['billing', 'currentCycle', 'cancellation'];
-    for (const field of jsonFields) {
-      if (updateData[field] && typeof updateData[field] === 'object') {
-        updateData[field] = JSON.stringify(updateData[field]);
-      }
-    }
-
-    // Update fields
-    Object.assign(subscription, updateData, { updatedAt: new Date() });
-    await repo.save(subscription);
-
-    return options.new !== false ? subscription : null;
-  },
-
-  /**
-   * Find subscriptions with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getSubscriptionRepository();
-    let search = repo.search();
-
-    // Apply filters
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-    if (query.paymentStatus) {
-      search = search.where('paymentStatus').equals(query.paymentStatus);
-    }
-    if (query.plan) {
-      search = search.where('plan').equals(query.plan);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const subscriptions = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return subscriptions;
-  },
-
-  /**
-   * Count subscriptions
-   */
-  async countDocuments(query = {}) {
-    const repo = await getSubscriptionRepository();
-    let search = repo.search();
-
-    if (query.user) {
-      search = search.where('user').equals(query.user);
-    }
-    if (query.status) {
-      search = search.where('status').equals(query.status);
-    }
-    if (query.paymentStatus) {
-      search = search.where('paymentStatus').equals(query.paymentStatus);
-    }
-
-    return search.return.count();
-  },
-
-  /**
-   * Delete subscription (hard delete)
-   */
-  async delete(id) {
-    const repo = await getSubscriptionRepository();
-    await repo.remove(id);
-  },
-
-  /**
-   * Find active subscriptions
-   */
-  async findActive() {
-    const repo = await getSubscriptionRepository();
-    return repo.search()
-      .where('status').equals('active')
-      .return.all();
-  },
-
-  /**
-   * Find subscriptions due for billing
-   */
-  async findDueForBilling() {
-    const repo = await getSubscriptionRepository();
-    const subscriptions = await repo.search()
-      .where('status').equals('active')
-      .where('renewalEnabled').equals(true)
-      .return.all();
-
-    // Filter by nextBillingDate (need to parse billing JSON)
-    const now = new Date();
-    return subscriptions.filter(sub => {
-      const billing = sub.billingParsed;
-      return billing && billing.nextBillingDate && new Date(billing.nextBillingDate) <= now;
-    });
-  },
-
-  /**
-   * Find overdue subscriptions
-   */
-  async findOverdue() {
-    const repo = await getSubscriptionRepository();
-    const now = new Date();
-    const subscriptions = await repo.search()
-      .where('status').equals('active')
-      .where('paymentStatus').equals('overdue')
-      .return.all();
-
-    // Filter by gracePeriodEnds
-    return subscriptions.filter(sub => {
-      return sub.gracePeriodEnds && new Date(sub.gracePeriodEnds) < now;
-    });
-  },
-
-  /**
-   * Find subscription by user
-   */
-  async findByUser(userId) {
-    const repo = await getSubscriptionRepository();
-    return repo.search()
-      .where('user').equals(userId)
-      .sortBy('createdAt', 'DESC')
-      .return.all();
-  },
-
-  /**
-   * Advance subscription to next cycle
-   */
-  async advanceToNextCycle(id) {
-    const repo = await getSubscriptionRepository();
-    const subscription = await repo.fetch(id);
-    if (!subscription || !subscription.user) return null;
-
-    const currentCycle = subscription.currentCycleParsed;
-    if (!currentCycle) return null;
-
-    let nextMonth = currentCycle.month + 1;
-    let nextYear = currentCycle.year;
-
-    if (nextMonth > 12) {
-      nextMonth = 1;
-      nextYear += 1;
-    }
-
-    const newCycle = {
-      cycleNumber: currentCycle.cycleNumber + 1,
-      month: nextMonth,
-      year: nextYear,
-      stylingWindowOpen: null,
-      stylingWindowClose: null,
-      productionStartDate: null,
-      estimatedDeliveryDate: null,
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      status:          'status',
+      billing:         'billing',
+      currentCycle:    'current_cycle',
+      paymentStatus:   'payment_status',
+      gracePeriodEnds: 'grace_period_ends',
+      startDate:       'start_date',
+      endDate:         'end_date',
+      renewalEnabled:  'renewal_enabled',
+      cancellation:    'cancellation',
     };
-
-    subscription.currentCycle = JSON.stringify(newCycle);
-    subscription.updatedAt = new Date();
-    await repo.save(subscription);
-
-    return subscription;
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+    }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE user_subscriptions SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Cancel subscription
-   */
-  async cancel(id, reason, cancelledBy, cancelledByModel) {
-    const repo = await getSubscriptionRepository();
-    const subscription = await repo.fetch(id);
-    if (!subscription || !subscription.user) return null;
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)          { conds.push(`user_id=$${i++}`);        vals.push(filters.user); }
+    if (filters.status)        { conds.push(`status=$${i++}`);         vals.push(filters.status); }
+    if (filters.paymentStatus) { conds.push(`payment_status=$${i++}`); vals.push(filters.paymentStatus); }
+    if (filters.plan)          { conds.push(`plan_id=$${i++}`);        vals.push(filters.plan); }
+    const { rows } = await query(
+      `SELECT * FROM user_subscriptions WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
+  },
 
-    subscription.status = 'cancelled';
-    subscription.cancellation = JSON.stringify({
-      cancelledAt: new Date().toISOString(),
-      reason,
-      cancelledBy,
-      cancelledByModel,
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.user)          { conds.push(`user_id=$${i++}`);        vals.push(filters.user); }
+    if (filters.status)        { conds.push(`status=$${i++}`);         vals.push(filters.status); }
+    if (filters.paymentStatus) { conds.push(`payment_status=$${i++}`); vals.push(filters.paymentStatus); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM user_subscriptions WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
+  },
+
+  async delete(id) {
+    await query('DELETE FROM user_subscriptions WHERE id=$1', [id]);
+  },
+
+  async findActive() {
+    const { rows } = await query(`SELECT * FROM user_subscriptions WHERE status='active'`);
+    return rows.map(format);
+  },
+
+  async findByUser(userId) {
+    const { rows } = await query(
+      'SELECT * FROM user_subscriptions WHERE user_id=$1 ORDER BY created_at DESC', [userId]
+    );
+    return rows.map(format);
+  },
+
+  async findDueForBilling() {
+    const { rows } = await query(
+      `SELECT * FROM user_subscriptions WHERE status='active' AND renewal_enabled=TRUE
+       AND (billing->>'nextBillingDate')::timestamptz <= NOW()`
+    );
+    return rows.map(format);
+  },
+
+  async findOverdue() {
+    const { rows } = await query(
+      `SELECT * FROM user_subscriptions WHERE status='active' AND payment_status='overdue'
+       AND grace_period_ends < NOW()`
+    );
+    return rows.map(format);
+  },
+
+  async advanceToNextCycle(id) {
+    const sub = await this.findById(id);
+    if (!sub || !sub.currentCycle) return null;
+    const cc = sub.currentCycle;
+    let nextMonth = cc.month + 1;
+    let nextYear = cc.year;
+    if (nextMonth > 12) { nextMonth = 1; nextYear += 1; }
+    const newCycle = {
+      cycleNumber: cc.cycleNumber + 1, month: nextMonth, year: nextYear,
+      stylingWindowOpen: null, stylingWindowClose: null,
+      productionStartDate: null, estimatedDeliveryDate: null,
+    };
+    return this.findByIdAndUpdate(id, { currentCycle: newCycle });
+  },
+
+  async cancel(id, reason, cancelledBy) {
+    return this.findByIdAndUpdate(id, {
+      status: 'cancelled',
+      cancellation: { cancelledAt: new Date().toISOString(), reason, cancelledBy },
     });
-    subscription.updatedAt = new Date();
-    await repo.save(subscription);
-
-    return subscription;
   },
 
-  /**
-   * Pause subscription
-   */
   async pause(id) {
-    const repo = await getSubscriptionRepository();
-    const subscription = await repo.fetch(id);
-    if (!subscription || !subscription.user) return null;
-
-    subscription.status = 'paused';
-    subscription.updatedAt = new Date();
-    await repo.save(subscription);
-
-    return subscription;
+    return this.findByIdAndUpdate(id, { status: 'paused' });
   },
 
-  /**
-   * Resume subscription
-   */
   async resume(id) {
-    const repo = await getSubscriptionRepository();
-    const subscription = await repo.fetch(id);
-    if (!subscription || !subscription.user) return null;
-
-    subscription.status = 'active';
-    subscription.updatedAt = new Date();
-    await repo.save(subscription);
-
-    return subscription;
+    return this.findByIdAndUpdate(id, { status: 'active' });
   },
 };
 

@@ -1,244 +1,144 @@
-import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { hashPassword, comparePassword } from '../../core/utils/crypto.js';
+import logger from '../../core/logger/index.js';
 
-// Admin Entity class
-class Model {
-  // Check if super admin
-  get isSuperAdmin() {
-    return this.role === 'super_admin';
-  }
+function format(row) {
+  if (!row) return null;
+  const a = {
+    id:             row.id,
+    entityId:       row.id,
+    fullName:       row.full_name,
+    email:          row.email,
+    phone:          row.phone,
+    role:           row.role,
+    profilePhoto:   row.profile_photo_url,
+    isActive:       row.is_active,
+    passwordHash:   row.password_hash,
+    createdBy:      row.created_by,
+    lastLoginAt:    row.last_login_at,
+    isDeleted:      row.is_deleted,
+    createdAt:      row.created_at,
+    updatedAt:      row.updated_at,
+    get isSuperAdmin() { return this.role === 'super_admin'; },
+    get accountStatus() { return this.isActive ? 'active' : 'inactive'; },
+    get permissions() {
+      // Role-to-permissions mapping kept simple here;
+      // full mapping is in core/constants/roles.js
+      return this.role === 'super_admin' ? ['*'] : [];
+    },
+  };
 
-  // Get parsed profile photo
-  get profilePhotoParsed() {
-    return this.profilePhoto ? JSON.parse(this.profilePhoto) : null;
-  }
+  a.toSafeJSON = () => {
+    const safe = { ...a };
+    delete safe.passwordHash;
+    delete safe.toSafeJSON;
+    return safe;
+  };
 
-  // Get parsed permissions
-  get permissionsParsed() {
-    return this.permissions ? JSON.parse(this.permissions) : [];
-  }
-
-  // Check if has specific permission
-  hasPermission(permission) {
-    if (this.role === 'super_admin') return true;
-    const perms = this.permissionsParsed;
-    return perms.includes(permission);
-  }
-
-  // Check if has any of the permissions
-  hasAnyPermission(permissions) {
-    if (this.role === 'super_admin') return true;
-    const perms = this.permissionsParsed;
-    return permissions.some(p => perms.includes(p));
-  }
-
-  // Convert to safe JSON (for API responses)
-  toSafeJSON() {
-    return {
-      id: this.entityId,
-      fullName: this.fullName,
-      email: this.email,
-      phone: this.phone,
-      role: this.role,
-      permissions: this.permissionsParsed,
-      profilePhoto: this.profilePhotoParsed,
-      accountStatus: this.accountStatus,
-      createdBy: this.createdBy,
-      lastLoginAt: this.lastLoginAt,
-      createdAt: this.createdAt,
-      updatedAt: this.updatedAt,
-      isSuperAdmin: this.isSuperAdmin,
-    };
-  }
+  return a;
 }
 
-// Admin Schema for Redis OM
-// Schema definition removed
-// Repository holder
-// Static methods as module functions
 const AdminModel = {
-  /**
-   * Create a new admin
-   */
-  async create(adminData) {
-    const repo = await getAdminRepository();
-
-    // Hash password
-    if (adminData.password) {
-      adminData.password = await hashPassword(adminData.password);
-    }
-
-    const now = new Date();
-    const admin = await repo.save({
-      fullName: adminData.fullName,
-      email: adminData.email?.toLowerCase(),
-      phone: adminData.phone,
-      password: adminData.password,
-      role: adminData.role || 'admin',
-      permissions: adminData.permissions ? JSON.stringify(adminData.permissions) : '[]',
-      profilePhoto: adminData.profilePhoto ? JSON.stringify(adminData.profilePhoto) : null,
-      accountStatus: adminData.accountStatus || 'active',
-      createdBy: adminData.createdBy,
-      lastLoginAt: adminData.lastLoginAt,
-      isDeleted: false,
-      createdAt: now,
-      updatedAt: now,
-    });
-
-    return admin;
+  async create(data) {
+    const passwordHash = data.password ? await hashPassword(data.password) : null;
+    const { rows } = await query(
+      `INSERT INTO admins (full_name,email,phone,password_hash,role,created_by)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      [
+        data.fullName,
+        data.email?.toLowerCase(),
+        data.phone || null,
+        passwordHash,
+        data.role || 'admin',
+        data.createdBy || null,
+      ]
+    );
+    logger.info(`Admin created: ${rows[0].email} (${rows[0].role})`);
+    return format(rows[0]);
   },
 
-  /**
-   * Find admin by ID
-   */
   async findById(id, options = {}) {
-    const repo = await getAdminRepository();
-    const admin = await repo.fetch(id);
-    if (!admin || !admin.email) return null;
-    if (admin.isDeleted && !options.includeDeleted) return null;
-    return admin;
+    const cond = options.includeDeleted ? '' : 'AND is_deleted=FALSE';
+    const { rows } = await query(`SELECT * FROM admins WHERE id=$1 ${cond}`, [id]);
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find admin by email
-   */
   async findByEmail(email) {
-    const repo = await getAdminRepository();
-    const admin = await repo.search()
-      .where('email').equals(email.toLowerCase())
-      .where('isDeleted').equals(false)
-      .return.first();
-    return admin;
+    const { rows } = await query(
+      'SELECT * FROM admins WHERE email=$1 AND is_deleted=FALSE',
+      [email.toLowerCase()]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Find admin by email with password (for auth)
-   */
-  async findByEmailWithPassword(email) {
-    return this.findByEmail(email);
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      fullName:        'full_name',
+      email:           'email',
+      phone:           'phone',
+      role:            'role',
+      profilePhotoUrl: 'profile_photo_url',
+      isActive:        'is_active',
+      lastLoginAt:     'last_login_at',
+      isDeleted:       'is_deleted',
+    };
+    const fields = [];
+    const values = [];
+    let i = 1;
+    if (updates.password) {
+      fields.push(`password_hash=$${i++}`);
+      values.push(await hashPassword(updates.password));
+    }
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+    }
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE admins SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update admin by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const repo = await getAdminRepository();
-    const admin = await repo.fetch(id);
-    if (!admin || !admin.email) return null;
-    if (admin.isDeleted && !options.includeDeleted) return null;
-
-    // Hash password if being updated
-    if (updateData.password) {
-      updateData.password = await hashPassword(updateData.password);
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['is_deleted=FALSE'];
+    const vals = [];
+    let i = 1;
+    if (filters.role)     { conds.push(`role=$${i++}`);     vals.push(filters.role); }
+    if (filters.isActive !== undefined) {
+      conds.push(`is_active=$${i++}`); vals.push(filters.isActive);
     }
-
-    // Serialize complex objects
-    if (updateData.permissions && Array.isArray(updateData.permissions)) {
-      updateData.permissions = JSON.stringify(updateData.permissions);
-    }
-    if (updateData.profilePhoto && typeof updateData.profilePhoto === 'object') {
-      updateData.profilePhoto = JSON.stringify(updateData.profilePhoto);
-    }
-
-    // Update fields
-    Object.assign(admin, updateData, { updatedAt: new Date() });
-    await repo.save(admin);
-
-    return options.new !== false ? admin : null;
+    const { rows } = await query(
+      `SELECT * FROM admins WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Delete admin (soft delete)
-   */
-  async findByIdAndDelete(id) {
-    const repo = await getAdminRepository();
-    const admin = await repo.fetch(id);
-    if (!admin || !admin.email) return null;
-
-    admin.isDeleted = true;
-    admin.updatedAt = new Date();
-    await repo.save(admin);
-
-    return admin;
+  async countDocuments(filters = {}) {
+    const conds = ['is_deleted=FALSE'];
+    const vals = [];
+    let i = 1;
+    if (filters.role) { conds.push(`role=$${i++}`); vals.push(filters.role); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM admins WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Find all admins with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const repo = await getAdminRepository();
-    let search = repo.search();
-
-    // Default: exclude deleted
-    if (query.includeDeleted !== true) {
-      search = search.where('isDeleted').equals(false);
-    }
-
-    // Apply filters
-    if (query.accountStatus) {
-      search = search.where('accountStatus').equals(query.accountStatus);
-    }
-    if (query.role) {
-      search = search.where('role').equals(query.role);
-    }
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    const admins = await search
-      .sortBy('createdAt', 'DESC')
-      .return.page(offset, limit);
-
-    return admins;
-  },
-
-  /**
-   * Find active admins
-   */
-  async findActive() {
-    const repo = await getAdminRepository();
-    return repo.search()
-      .where('isDeleted').equals(false)
-      .where('accountStatus').equals('active')
-      .return.all();
-  },
-
-  /**
-   * Count admins
-   */
-  async countDocuments(query = {}) {
-    const repo = await getAdminRepository();
-    let search = repo.search();
-
-    if (query.includeDeleted !== true) {
-      search = search.where('isDeleted').equals(false);
-    }
-    if (query.accountStatus) {
-      search = search.where('accountStatus').equals(query.accountStatus);
-    }
-    if (query.role) {
-      search = search.where('role').equals(query.role);
-    }
-
-    return search.return.count();
-  },
-
-  /**
-   * Compare password
-   */
   async comparePassword(admin, candidatePassword) {
-    if (!admin.password) return false;
-    return comparePassword(candidatePassword, admin.password);
+    if (!admin.passwordHash) return false;
+    return comparePassword(candidatePassword, admin.passwordHash);
   },
 
-  /**
-   * Check if email exists
-   */
   async emailExists(email) {
-    const admin = await this.findByEmail(email);
-    return !!admin;
+    return !!(await this.findByEmail(email));
+  },
+
+  async findByIdAndDelete(id) {
+    // Soft-delete; admins are never hard-deleted
+    return this.findByIdAndUpdate(id, { isDeleted: true });
   },
 };
 

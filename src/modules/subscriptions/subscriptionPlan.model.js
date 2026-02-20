@@ -1,286 +1,163 @@
-import { getFirestore } from '../../infrastructure/database/firebase.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
 
-const COLLECTION = 'subscriptionPlans';
-const CACHE_TTL = 3600; // 1 hour
+const CACHE_TTL = 3600;
 
-// Helper to parse JSON fields
-const parseJsonFields = (plan) => {
-  if (!plan) return null;
+function format(row) {
+  if (!row) return null;
   return {
-    ...plan,
-    pricing: plan.pricing && typeof plan.pricing === 'string' ? JSON.parse(plan.pricing) : plan.pricing || null,
-    features: plan.features && typeof plan.features === 'string' ? JSON.parse(plan.features) : plan.features || null,
-    stylingWindow: plan.stylingWindow && typeof plan.stylingWindow === 'string' 
-      ? JSON.parse(plan.stylingWindow) 
-      : plan.stylingWindow || {
-          daysBeforeProduction: 7,
-          reminderDays: [7, 3, 1],
-        },
+    id:            row.id,
+    entityId:      row.id,
+    name:          row.name,
+    slug:          row.slug,
+    description:   row.description,
+    pricing:       row.pricing,
+    features:      row.features,
+    stylingWindow: row.styling_window || { daysBeforeProduction: 7, reminderDays: [7, 3, 1] },
+    isActive:      row.is_active,
+    displayOrder:  row.display_order,
+    createdAt:     row.created_at,
+    updatedAt:     row.updated_at,
   };
-};
+}
 
-// Helper to stringify JSON fields for storage
-const stringifyJsonFields = (data) => {
-  const cleaned = { ...data };
-  if (cleaned.pricing && typeof cleaned.pricing === 'object') {
-    cleaned.pricing = JSON.stringify(cleaned.pricing);
-  }
-  if (cleaned.features && typeof cleaned.features === 'object') {
-    cleaned.features = JSON.stringify(cleaned.features);
-  }
-  if (cleaned.stylingWindow && typeof cleaned.stylingWindow === 'object') {
-    cleaned.stylingWindow = JSON.stringify(cleaned.stylingWindow);
-  }
-  return cleaned;
-};
-
-// Helper to cache plan in Redis
-const cachePlan = async (id, plan) => {
+async function cachePlan(plan) {
   try {
     const redis = getRedisClient();
-    await redis.setex(`subscriptionPlan:${id}`, CACHE_TTL, JSON.stringify(plan));
-  } catch (err) {
-    // Redis errors are non-fatal for caching
-    console.error('Cache error for plan:', err.message);
-  }
-};
+    if (redis && plan?.id) await redis.set(`subscriptionPlan:${plan.id}`, JSON.stringify(plan), { EX: CACHE_TTL });
+  } catch { /* non-fatal */ }
+}
 
-// Helper to get cached plan
-const getCachedPlan = async (id) => {
+async function getCachedPlan(id) {
   try {
     const redis = getRedisClient();
     const cached = await redis.get(`subscriptionPlan:${id}`);
     return cached ? JSON.parse(cached) : null;
-  } catch (err) {
-    return null;
-  }
-};
+  } catch { return null; }
+}
 
-// Helper to clear plan cache
-const clearPlanCache = async (id) => {
-  try {
-    const redis = getRedisClient();
-    await redis.del(`subscriptionPlan:${id}`);
-  } catch (err) {
-    console.error('Cache clear error:', err.message);
-  }
-};
+async function clearPlanCache(id) {
+  try { const redis = getRedisClient(); await redis.del(`subscriptionPlan:${id}`); } catch { /* non-fatal */ }
+}
 
 const SubscriptionPlanModel = {
-  /**
-   * Create a new subscription plan
-   */
-  async create(planData) {
-    const db = getFirestore();
-    const now = new Date();
-
-    const docData = {
-      name: planData.name,
-      slug: planData.slug?.toLowerCase() || '',
-      description: planData.description || '',
-      pricing: planData.pricing || null,
-      features: planData.features || null,
-      stylingWindow: planData.stylingWindow || {
-        daysBeforeProduction: 7,
-        reminderDays: [7, 3, 1],
-      },
-      isActive: planData.isActive !== false,
-      displayOrder: planData.displayOrder || 0,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    // Store complex objects normally (Firestore handles nested objects)
-    const docRef = await db.collection(COLLECTION).add(docData);
-    
-    const plan = {
-      id: docRef.id,
-      ...docData,
-    };
-
-    await cachePlan(plan.id, parseJsonFields(plan));
-    return parseJsonFields(plan);
+  async create(data) {
+    const { rows } = await query(
+      `INSERT INTO subscription_plans
+         (name, slug, description, pricing, features, styling_window, is_active, display_order)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        data.name,
+        data.slug?.toLowerCase() || '',
+        data.description || '',
+        data.pricing || null,
+        data.features || null,
+        data.stylingWindow || { daysBeforeProduction: 7, reminderDays: [7, 3, 1] },
+        data.isActive !== false,
+        data.displayOrder || 0,
+      ]
+    );
+    const plan = format(rows[0]);
+    await cachePlan(plan);
+    return plan;
   },
 
-  /**
-   * Find subscription plan by ID
-   */
   async findById(id) {
-    // Try cache first
-    let plan = await getCachedPlan(id);
-    if (plan) return plan;
-
-    const db = getFirestore();
-    const docSnapshot = await db.collection(COLLECTION).doc(id).get();
-    
-    if (!docSnapshot.exists) return null;
-    
-    const plan_data = {
-      id: docSnapshot.id,
-      ...docSnapshot.data(),
-    };
-
-    const parsed = parseJsonFields(plan_data);
-    await cachePlan(id, parsed);
-    return parsed;
+    const cached = await getCachedPlan(id);
+    if (cached) return cached;
+    const { rows } = await query('SELECT * FROM subscription_plans WHERE id=$1', [id]);
+    const plan = format(rows[0] || null);
+    if (plan) await cachePlan(plan);
+    return plan;
   },
 
-  /**
-   * Find subscription plan by slug
-   */
   async findBySlug(slug) {
-    const db = getFirestore();
-    const query = db.collection(COLLECTION)
-      .where('slug', '==', slug.toLowerCase())
-      .where('isActive', '==', true);
-    
-    const querySnapshot = await query.limit(1).get();
-    
-    if (querySnapshot.empty) return null;
-    
-    const doc = querySnapshot.docs[0];
-    const plan = {
-      id: doc.id,
-      ...doc.data(),
-    };
-
-    return parseJsonFields(plan);
+    const { rows } = await query(
+      'SELECT * FROM subscription_plans WHERE slug=$1 AND is_active=TRUE LIMIT 1',
+      [slug.toLowerCase()]
+    );
+    return format(rows[0] || null);
   },
 
-  /**
-   * Update subscription plan by ID
-   */
-  async findByIdAndUpdate(id, updateData, options = {}) {
-    const db = getFirestore();
-    
-    // Check if plan exists
-    const docSnapshot = await db.collection(COLLECTION).doc(id).get();
-    if (!docSnapshot.exists) return null;
-
-    // Prepare update data
-    const dataToUpdate = {
-      ...updateData,
-      updatedAt: new Date(),
+  async findByIdAndUpdate(id, updates) {
+    const colMap = {
+      name:          'name',
+      slug:          'slug',
+      description:   'description',
+      pricing:       'pricing',
+      features:      'features',
+      stylingWindow: 'styling_window',
+      isActive:      'is_active',
+      displayOrder:  'display_order',
     };
-
-    // Ensure slug is lowercase
-    if (dataToUpdate.slug) {
-      dataToUpdate.slug = dataToUpdate.slug.toLowerCase();
+    const fields = [];
+    const values = [];
+    let i = 1;
+    for (const [jsKey, dbCol] of Object.entries(colMap)) {
+      if (jsKey in updates) {
+        let val = updates[jsKey];
+        if (jsKey === 'slug' && val) val = val.toLowerCase();
+        fields.push(`${dbCol}=$${i++}`);
+        values.push(val);
+      }
     }
-
-    // Update in Firestore
-    await db.collection(COLLECTION).doc(id).update(dataToUpdate);
-
-    // Clear cache
-    await clearPlanCache(id);
-
-    // Return updated document if requested
-    if (options.new !== false) {
-      return this.findById(id);
-    }
-
-    return null;
+    if (!fields.length) return this.findById(id);
+    values.push(id);
+    const { rows } = await query(
+      `UPDATE subscription_plans SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    const plan = format(rows[0] || null);
+    if (plan) { await clearPlanCache(id); await cachePlan(plan); }
+    return plan;
   },
 
-  /**
-   * Find subscription plans with filters and pagination
-   */
-  async find(query = {}, options = {}) {
-    const db = getFirestore();
-    let firestoreQuery = db.collection(COLLECTION);
-
-    // Apply filters
-    if (query.isActive !== undefined) {
-      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
-    }
-
-    // Sort by display order
-    firestoreQuery = firestoreQuery.orderBy('displayOrder', 'asc')
-      .orderBy('createdAt', 'desc');
-
-    // Apply pagination
-    const page = options.page || 1;
-    const limit = options.limit || 20;
-    const offset = (page - 1) * limit;
-
-    // Get total count
-    const countQuery = await firestoreQuery.count().get();
-    const total = countQuery.data().count;
-
-    // Get paginated results
-    const querySnapshot = await firestoreQuery
-      .offset(offset)
-      .limit(limit)
-      .get();
-
-    const plans = querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    })).map(parseJsonFields);
-
+  async find(filters = {}, options = {}) {
+    const { limit = 20, offset = 0 } = options;
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`); vals.push(filters.isActive); }
+    const total = parseInt(
+      (await query(`SELECT COUNT(*) AS cnt FROM subscription_plans WHERE ${conds.join(' AND ')}`, vals)).rows[0].cnt, 10
+    );
+    const { rows } = await query(
+      `SELECT * FROM subscription_plans WHERE ${conds.join(' AND ')} ORDER BY display_order ASC, created_at DESC LIMIT $${i++} OFFSET $${i++}`,
+      [...vals, limit, offset]
+    );
     return {
-      data: plans,
-      pagination: {
-        page,
-        limit,
-        total,
-        pages: Math.ceil(total / limit),
-      },
+      data: rows.map(format),
+      pagination: { page: Math.floor(offset / limit) + 1, limit, total, pages: Math.ceil(total / limit) },
     };
   },
 
-  /**
-   * Count subscription plans
-   */
-  async countDocuments(query = {}) {
-    const db = getFirestore();
-    let firestoreQuery = db.collection(COLLECTION);
-
-    if (query.isActive !== undefined) {
-      firestoreQuery = firestoreQuery.where('isActive', '==', query.isActive);
-    }
-
-    const countQuery = await firestoreQuery.count().get();
-    return countQuery.data().count;
+  async countDocuments(filters = {}) {
+    const conds = ['TRUE'];
+    const vals = [];
+    let i = 1;
+    if (filters.isActive !== undefined) { conds.push(`is_active=$${i++}`); vals.push(filters.isActive); }
+    const { rows } = await query(
+      `SELECT COUNT(*) AS cnt FROM subscription_plans WHERE ${conds.join(' AND ')}`, vals
+    );
+    return parseInt(rows[0].cnt, 10);
   },
 
-  /**
-   * Delete subscription plan (hard delete)
-   */
   async delete(id) {
-    const db = getFirestore();
     await clearPlanCache(id);
-    await db.collection(COLLECTION).doc(id).delete();
+    await query('DELETE FROM subscription_plans WHERE id=$1', [id]);
   },
 
-  /**
-   * Find active plans sorted by display order
-   */
   async findActive() {
-    const db = getFirestore();
-    const querySnapshot = await db.collection(COLLECTION)
-      .where('isActive', '==', true)
-      .orderBy('displayOrder', 'asc')
-      .get();
-
-    return querySnapshot.docs.map(doc => ({
-      id: doc.id,
-      ...doc.data(),
-    })).map(parseJsonFields);
+    const { rows } = await query(
+      'SELECT * FROM subscription_plans WHERE is_active=TRUE ORDER BY display_order ASC'
+    );
+    return rows.map(format);
   },
 
-  /**
-   * Check if slug exists
-   */
   async slugExists(slug) {
-    const db = getFirestore();
-    const querySnapshot = await db.collection(COLLECTION)
-      .where('slug', '==', slug.toLowerCase())
-      .limit(1)
-      .get();
-
-    return !querySnapshot.empty;
+    const { rows } = await query(
+      'SELECT id FROM subscription_plans WHERE slug=$1 LIMIT 1', [slug.toLowerCase()]
+    );
+    return rows.length > 0;
   },
 };
 
