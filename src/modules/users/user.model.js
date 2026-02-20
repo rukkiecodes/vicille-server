@@ -151,9 +151,9 @@ const UserModel = {
     if (filters.accountStatus) { conds.push(`status=$${i++}`);        vals.push(filters.accountStatus); }
     const { rows } = await query(
       `SELECT * FROM users WHERE ${conds.join(' AND ')} ORDER BY created_at DESC LIMIT $${i++} OFFSET $${i++}`,
-      [...vals, limit + 1, offset]
+      [...vals, limit, offset]
     );
-    return { users: rows.slice(0, limit).map(format), hasMore: rows.length > limit };
+    return rows.map(format);
   },
 
   async countDocuments(filters = {}) {
@@ -189,6 +189,73 @@ const UserModel = {
 
   async phoneExists(phone) {
     return !!(await this.findByPhone(phone));
+  },
+
+  async findByIdAndDelete(id) {
+    return this.findByIdAndUpdate(id, { isDeleted: true, status: 'deleted', deletedAt: new Date() });
+  },
+
+  async updateDeliveryDetails(userId, input) {
+    await query(
+      `INSERT INTO user_delivery_details (user_id, address, phone, landmark, nearest_bus_stop)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (user_id) DO UPDATE SET
+         address=EXCLUDED.address,
+         phone=EXCLUDED.phone,
+         landmark=EXCLUDED.landmark,
+         nearest_bus_stop=EXCLUDED.nearest_bus_stop,
+         updated_at=NOW()`,
+      [userId, input.address, input.phone, input.landmark || null, input.nearestBusStop || null]
+    );
+    return this.findById(userId);
+  },
+
+  async updatePreferences(userId, input) {
+    await query(
+      `INSERT INTO user_preferences (user_id, clothing_styles, colors, fabrics, lifestyle)
+       VALUES ($1,$2,$3,$4,$5)
+       ON CONFLICT (user_id) DO UPDATE SET
+         clothing_styles=EXCLUDED.clothing_styles,
+         colors=EXCLUDED.colors,
+         fabrics=EXCLUDED.fabrics,
+         lifestyle=EXCLUDED.lifestyle,
+         updated_at=NOW()`,
+      [
+        userId,
+        input.styles || [],
+        input.colors || [],
+        input.fabrics || [],
+        input.lifestyle ? JSON.stringify({ value: input.lifestyle }) : '{}',
+      ]
+    );
+    return this.findById(userId);
+  },
+
+  async findDeliveryDetails(userId) {
+    const { rows } = await query(
+      'SELECT * FROM user_delivery_details WHERE user_id=$1', [userId]
+    );
+    if (!rows[0]) return null;
+    return {
+      address: rows[0].address,
+      phone: rows[0].phone,
+      landmark: rows[0].landmark,
+      nearestBusStop: rows[0].nearest_bus_stop,
+    };
+  },
+
+  async findPreferences(userId) {
+    const { rows } = await query(
+      'SELECT * FROM user_preferences WHERE user_id=$1', [userId]
+    );
+    if (!rows[0]) return null;
+    const lifestyle = rows[0].lifestyle;
+    return {
+      styles: rows[0].clothing_styles || [],
+      colors: rows[0].colors || [],
+      fabrics: rows[0].fabrics || [],
+      lifestyle: typeof lifestyle === 'object' ? (lifestyle?.value || null) : lifestyle || null,
+    };
   },
 
   // Redis session cache

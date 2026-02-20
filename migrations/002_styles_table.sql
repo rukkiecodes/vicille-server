@@ -3,7 +3,10 @@
 -- Run after 001_initial_schema.sql
 -- ============================================================
 
-CREATE TABLE IF NOT EXISTS styles (
+-- Drop the simpler styles table from 001_initial_schema.sql and replace with full schema
+DROP TABLE IF EXISTS styles;
+
+CREATE TABLE styles (
   id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   name           TEXT NOT NULL,
   slug           TEXT UNIQUE NOT NULL,

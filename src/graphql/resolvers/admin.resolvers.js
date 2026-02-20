@@ -26,8 +26,9 @@ const adminResolvers = {
       requireAdmin(context);
       const page = pagination.page || 1;
       const limit = pagination.limit || 20;
+      const offset = (page - 1) * limit;
 
-      const admins = await AdminModel.find({}, { page, limit });
+      const admins = await AdminModel.find({}, { limit, offset });
       const total = await AdminModel.countDocuments({});
 
       return buildPaginatedResponse(entitiesToJSON(admins), total, page, limit);
@@ -83,7 +84,7 @@ const adminResolvers = {
 
   Mutation: {
     createAdmin: async (_, { input }, context) => {
-      requireAdmin(context);
+      const authAdmin = requireAdmin(context);
 
       const exists = await AdminModel.emailExists(input.email);
       if (exists) {
@@ -94,7 +95,7 @@ const adminResolvers = {
 
       const admin = await AdminModel.create({
         ...input,
-        createdBy: context.user.id,
+        createdBy: authAdmin.id,
       });
       return entityToJSON(admin);
     },
@@ -111,8 +112,8 @@ const adminResolvers = {
     },
 
     deleteAdmin: async (_, { id }, context) => {
-      requireAdmin(context);
-      if (context.user.id === id) {
+      const authAdmin = requireAdmin(context);
+      if (authAdmin.id === id) {
         throw new GraphQLError('Cannot delete your own account', {
           extensions: { code: 'BAD_USER_INPUT' },
         });
@@ -122,7 +123,7 @@ const adminResolvers = {
     },
 
     createClientAccount: async (_, { email, fullName, phone }, context) => {
-      requireAdmin(context);
+      const authAdmin = requireAdmin(context);
 
       const existing = await UserModel.findByEmail(email);
       if (existing) {
@@ -138,7 +139,7 @@ const adminResolvers = {
         phone: phone || null,
         activationCode: passcode,
         status: 'inactive',
-        createdByAdminId: context.user.id,
+        createdByAdminId: authAdmin.id,
       });
 
       try {
@@ -147,7 +148,7 @@ const adminResolvers = {
         logger.error('createClientAccount: failed to send invite email:', emailError);
       }
 
-      logger.info(`Client account created by admin ${context.user.id}: ${email}`);
+      logger.info(`Client account created by admin ${authAdmin.id}: ${email}`);
 
       return {
         success:  true,
