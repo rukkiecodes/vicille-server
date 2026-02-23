@@ -18,20 +18,12 @@ const authResolvers = {
   Mutation: {
     // ─── CLIENT AUTH ─────────────────────────────────────────────────────────
 
-    clientLogin: async (_, { email, passcode }) => {
+    clientLogin: async (_, { passcode }) => {
       try {
-        const user = await UserModel.findByEmail(email);
+        const user = await UserModel.findByActivationCode(passcode);
 
         if (!user) {
-          throw new GraphQLError('Invalid credentials', {
-            extensions: { code: 'UNAUTHENTICATED' },
-          });
-        }
-
-        const isValid = await UserModel.compareActivationCode(user, passcode);
-        if (!isValid) {
-          await UserModel.incrementFailedAttempts(user);
-          throw new GraphQLError('Invalid credentials', {
+          throw new GraphQLError('Invalid passcode', {
             extensions: { code: 'UNAUTHENTICATED' },
           });
         }

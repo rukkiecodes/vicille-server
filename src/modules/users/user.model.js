@@ -1,6 +1,5 @@
 import { query } from '../../infrastructure/database/postgres.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
-import { comparePassword } from '../../core/utils/crypto.js';
 import logger from '../../core/logger/index.js';
 
 const REDIS_SESSION_PREFIX = 'session:user:';
@@ -181,6 +180,14 @@ const UserModel = {
 
   async resetFailedAttempts(user) {
     return this.findByIdAndUpdate(user.entityId, { failedLoginAttempts: 0 });
+  },
+
+  async findByActivationCode(passcode) {
+    const { rows } = await query(
+      "SELECT * FROM users WHERE activation_code=$1 AND is_deleted=FALSE AND status != 'deleted'",
+      [passcode]
+    );
+    return format(rows[0] || null);
   },
 
   async emailExists(email) {

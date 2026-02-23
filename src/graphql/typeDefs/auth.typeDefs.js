@@ -28,7 +28,7 @@ const authTypeDefs = gql`
 
   extend type Mutation {
     # Client auth — invite-only, passcode based
-    clientLogin(email: String!, passcode: String!): AuthPayload!
+    clientLogin(passcode: String!): AuthPayload!
     clientForgotPasscode(email: String!): MessageResult!
 
     # Tailor auth — self-signup, email/password
