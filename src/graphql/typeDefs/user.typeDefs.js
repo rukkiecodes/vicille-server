@@ -54,6 +54,11 @@ const userTypeDefs = gql`
     expiryYear: Int
   }
 
+  type OnboardingStatus {
+    completed: Boolean!
+    step:      Int!
+  }
+
   type UserConnection {
     nodes: [User!]!
     pageInfo: PageInfo!
@@ -62,6 +67,7 @@ const userTypeDefs = gql`
   extend type Query {
     # User queries
     me: User
+    onboardingStatus: OnboardingStatus!
     user(id: ID!): User
     users(
       filter: UserFilterInput

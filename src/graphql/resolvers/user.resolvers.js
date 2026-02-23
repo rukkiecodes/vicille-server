@@ -5,6 +5,25 @@ import logger from '../../core/logger/index.js';
 
 const userResolvers = {
   Query: {
+    onboardingStatus: async (_, __, context) => {
+      const authUser = requireAuth(context);
+      if (authUser.type !== 'user') {
+        throw new GraphQLError('This query is for users only', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+      const user = await UserModel.findById(authUser.id);
+      if (!user) {
+        throw new GraphQLError('User not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+      return {
+        completed: user.onboardingCompleted ?? false,
+        step:      user.onboardingStep      ?? 0,
+      };
+    },
+
     me: async (_, __, context) => {
       const authUser = requireAuth(context);
       if (authUser.type !== 'user') {
