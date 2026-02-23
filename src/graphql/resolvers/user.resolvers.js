@@ -1,7 +1,11 @@
 import { GraphQLError } from 'graphql';
+import { v2 as cloudinary } from 'cloudinary';
 import UserModel from '../../modules/users/user.model.js';
 import { requireAuth, requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
+import { cloudinaryConfig, uploadPresets } from '../../config/cloudinary.js';
 import logger from '../../core/logger/index.js';
+
+cloudinary.config(cloudinaryConfig);
 
 const userResolvers = {
   Query: {
@@ -134,6 +138,43 @@ const userResolvers = {
 
       const updated = await UserModel.findByIdAndUpdate(authUser.id, updateData);
       return entityToJSON(updated);
+    },
+
+    uploadProfilePhoto: async (_, { base64, mimeType = 'image/jpeg' }, context) => {
+      const authUser = requireAuth(context);
+      if (authUser.type !== 'user') {
+        throw new GraphQLError('This mutation is for users only', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+
+      const dataURI = `data:${mimeType};base64,${base64}`;
+
+      let uploadResult;
+      try {
+        uploadResult = await cloudinary.uploader.upload(dataURI, {
+          ...uploadPresets.profilePhoto,
+          public_id: `user_${authUser.id}`,
+          overwrite:  true,
+        });
+      } catch (err) {
+        logger.error('Cloudinary upload error:', err);
+        throw new GraphQLError('Failed to upload image. Please try again.', {
+          extensions: { code: 'UPLOAD_FAILED' },
+        });
+      }
+
+      const user = await UserModel.findByIdAndUpdate(authUser.id, {
+        profilePhotoUrl: uploadResult.secure_url,
+      });
+
+      if (!user) {
+        throw new GraphQLError('User not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      return entityToJSON(user);
     },
 
     deactivateAccount: async (_, __, context) => {

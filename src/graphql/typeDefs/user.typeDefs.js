@@ -54,6 +54,14 @@ const userTypeDefs = gql`
     expiryYear: Int
   }
 
+  type ProfilePhoto {
+    url: String!
+  }
+
+  input ProfilePhotoInput {
+    url: String!
+  }
+
   type OnboardingStatus {
     completed: Boolean!
     step:      Int!
@@ -81,6 +89,7 @@ const userTypeDefs = gql`
     updateDeliveryDetails(input: DeliveryDetailsInput!): User!
     updatePreferences(input: UserPreferencesInput!): User!
     completeOnboardingStep(step: Int!, data: JSON): User!
+    uploadProfilePhoto(base64: String!, mimeType: String): User!
     deactivateAccount: DeleteResult!
   }
 
