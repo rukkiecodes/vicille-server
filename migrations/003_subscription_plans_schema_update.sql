@@ -14,9 +14,15 @@ ALTER TABLE subscription_plans
   ADD COLUMN IF NOT EXISTS styling_window JSONB DEFAULT '{"daysBeforeProduction":7,"reminderDays":[7,3,1]}'::jsonb,
   ADD COLUMN IF NOT EXISTS display_order  INT  NOT NULL DEFAULT 0;
 
--- Unique index on slug (partial — allows multiple NULLs)
-CREATE UNIQUE INDEX IF NOT EXISTS idx_subscription_plans_slug
-  ON subscription_plans(slug) WHERE slug IS NOT NULL;
+-- Unique constraint on slug (required for ON CONFLICT to work)
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'subscription_plans_slug_unique'
+  ) THEN
+    ALTER TABLE subscription_plans ADD CONSTRAINT subscription_plans_slug_unique UNIQUE (slug);
+  END IF;
+END $$;
 
 -- ─────────────────────────────────────────────────────────────
 -- 2. Seed the 8 plans
