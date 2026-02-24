@@ -1,13 +1,13 @@
 import { Router } from 'express';
-import healthRoutes from './health.routes.js';
-import webhookRoutes from './webhooks.routes.js';
+import healthRoutes   from './health.routes.js';
+import internalRoutes from './internal.routes.js';
 
 const router = Router();
 
 // Health check routes
 router.use('/', healthRoutes);
 
-// Webhook routes
-router.use('/webhooks', webhookRoutes);
+// Internal service-to-service routes (from vicelle-pay)
+router.use('/internal', internalRoutes);
 
 export default router;

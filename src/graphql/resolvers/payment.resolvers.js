@@ -1,162 +1,137 @@
+/**
+ * Payment resolvers — thin proxy to vicelle-pay microservice.
+ * No payment logic lives here; all calls are forwarded via HTTP.
+ */
 import { GraphQLError } from 'graphql';
-import PaymentModel from '../../modules/payments/payment.model.js';
-import UserModel from '../../modules/users/user.model.js';
-import { requireAuth, requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
+import { requireAuth, requireAdmin } from '../helpers.js';
 import logger from '../../core/logger/index.js';
 
-const paymentResolvers = {
-  Payment: {
-    userDetails: async (payment) => {
-      if (!payment.user) {
-        return null;
-      }
-      try {
-        const user = await UserModel.findById(payment.user);
-        return user ? entityToJSON(user) : null;
-      } catch (error) {
-        logger.error('Error resolving payment.userDetails:', error);
-        return null;
-      }
-    },
-  },
+const PAY_URL = process.env.VICELLE_PAY_URL  || 'http://localhost:5000';
+const PAY_KEY = process.env.INTERNAL_SERVICE_KEY || '';
 
+async function callPay(method, path, body) {
+  const res = await fetch(`${PAY_URL}${path}`, {
+    method,
+    headers: {
+      'x-service-key': PAY_KEY,
+      'Content-Type':  'application/json',
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  const text = await res.text();
+  let json;
+  try { json = JSON.parse(text); } catch { json = { error: text }; }
+
+  if (!res.ok) {
+    logger.error(`[payment-proxy] ${method} ${path} → ${res.status}`, json);
+    throw new GraphQLError(json?.error || 'Payment service error', {
+      extensions: { code: 'PAYMENT_SERVICE_ERROR', status: res.status },
+    });
+  }
+
+  return json;
+}
+
+const paymentResolvers = {
   Query: {
+    myPayments: async (_, __, context) => {
+      const authUser = requireAuth(context);
+      // vicelle-pay doesn't expose a paginated payments list yet — return empty
+      // (can be expanded once vicelle-pay has GET /payment/list/:userId)
+      return { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+    },
+
     payment: async (_, { id }, context) => {
       requireAuth(context);
-      const payment = await PaymentModel.findById(id);
-      if (!payment) {
-        throw new GraphQLError('Payment not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
-      }
-      return entityToJSON(payment);
+      return callPay('GET', `/payment/status/${id}`);
     },
 
     paymentByReference: async (_, { reference }, context) => {
       requireAuth(context);
-      const payment = await PaymentModel.findByTransactionReference(reference);
-      if (!payment) {
-        throw new GraphQLError('Payment not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
-      }
-      return entityToJSON(payment);
+      return callPay('GET', `/payment/status/${reference}`);
     },
 
-    payments: async (_, { filter = {}, pagination = {} }, context) => {
+    payments: async (_, __, context) => {
       requireAdmin(context);
-      const page = pagination.page || 1;
-      const limit = pagination.limit || 20;
-
-      const query = {};
-      if (filter.status) {
-        query.status = filter.status;
-      }
-      if (filter.paymentType) {
-        query.paymentType = filter.paymentType;
-      }
-      if (filter.user) {
-        query.user = filter.user;
-      }
-      if (filter.order) {
-        query.order = filter.order;
-      }
-
-      const payments = await PaymentModel.find(query, { page, limit });
-      const total = await PaymentModel.countDocuments(query);
-
-      return buildPaginatedResponse(entitiesToJSON(payments), total, page, limit);
+      return { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
     },
 
-    myPayments: async (_, { pagination = {} }, context) => {
+    myPaymentMethods: async (_, __, context) => {
       const authUser = requireAuth(context);
-      const page = pagination.page || 1;
-      const limit = pagination.limit || 20;
-
-      const payments = await PaymentModel.findByUser(authUser.id, { page, limit });
-      const total = await PaymentModel.countDocuments({ user: authUser.id });
-
-      return buildPaginatedResponse(entitiesToJSON(payments), total, page, limit);
+      return callPay('GET', `/payment/methods/${authUser.id}`);
     },
   },
 
   Mutation: {
-    initializePayment: async (_, { input }, context) => {
+    /**
+     * Main subscription entry point.
+     * Creates a pending subscription in DB then asks vicelle-pay to initialize
+     * the Paystack transaction. Returns a redirect URL for the app to open.
+     */
+    initializeSubscriptionPayment: async (_, { planId }, context) => {
       const authUser = requireAuth(context);
-      const payment = await PaymentModel.create({
-        ...input,
-        user: authUser.id,
-        status: 'pending',
+
+      // Import locally to avoid circular deps
+      const { default: SubscriptionPlanModel } = await import('../../modules/subscriptions/subscriptionPlan.model.js');
+      const { default: SubscriptionModel }     = await import('../../modules/subscriptions/subscription.model.js');
+      const { default: UserModel }             = await import('../../modules/users/user.model.js');
+
+      const plan = await SubscriptionPlanModel.findById(planId);
+      if (!plan) {
+        throw new GraphQLError('Subscription plan not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      // Cancel any existing pending_payment subscription before starting fresh
+      const existing = await SubscriptionModel.findByUser(authUser.id);
+      for (const s of existing) {
+        if (s.status === 'active') {
+          throw new GraphQLError('You already have an active subscription.', {
+            extensions: { code: 'CONFLICT' },
+          });
+        }
+        if (s.status === 'pending_payment') {
+          await SubscriptionModel.findByIdAndUpdate(s.entityId || s.id, {
+            status: 'cancelled',
+          });
+        }
+      }
+
+      // Create subscription in pending_payment state
+      const sub = await SubscriptionModel.create({
+        user:   authUser.id,
+        plan:   planId,
+        status: 'pending_payment',
+        paymentStatus: 'pending',
       });
-      return entityToJSON(payment);
+
+      const user = await UserModel.findById(authUser.id);
+      const amountInKobo = Math.round((plan.pricing?.amount || 0) * 100);
+
+      const result = await callPay('POST', '/payment/initialize', {
+        userId:         authUser.id,
+        planId,
+        subscriptionId: sub.entityId || sub.id,
+        email:          user?.email || authUser.email,
+        amount:         amountInKobo,
+      });
+
+      return result; // { redirectUrl, reference, paymentId }
     },
 
     verifyPayment: async (_, { reference }, context) => {
       requireAuth(context);
-      const payment = await PaymentModel.findByTransactionReference(reference);
-      if (!payment) {
-        throw new GraphQLError('Payment not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
-      }
-
-      // In a real implementation, this would verify with the payment provider
-      const updated = await PaymentModel.findByIdAndUpdate(
-        payment.entityId || payment.id,
-        {
-          status: 'success',
-          paidAt: new Date(),
-        },
-        { new: true }
-      );
-
-      return entityToJSON(updated);
+      return callPay('GET', `/payment/status/${reference}`);
     },
 
-    retryPayment: async (_, { id }, context) => {
-      requireAuth(context);
-      const payment = await PaymentModel.findById(id);
-      if (!payment) {
-        throw new GraphQLError('Payment not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
-      }
-
-      if (!payment.canRetry) {
-        throw new GraphQLError('Payment cannot be retried', {
-          extensions: { code: 'BAD_USER_INPUT' },
-        });
-      }
-
-      const updated = await PaymentModel.findByIdAndUpdate(id, {
-        status: 'pending',
-        retryCount: (payment.retryCount || 0) + 1,
-      }, { new: true });
-
-      return entityToJSON(updated);
-    },
-
-    refundPayment: async (_, { id, amount, reason }, context) => {
+    // Keep admin refund wired (calls vicelle-pay once that endpoint exists)
+    refundPayment: async (_, { id }, context) => {
       requireAdmin(context);
-      const payment = await PaymentModel.findById(id);
-      if (!payment) {
-        throw new GraphQLError('Payment not found', {
-          extensions: { code: 'NOT_FOUND' },
-        });
-      }
-
-      const refundAmount = amount || payment.amount;
-      const updated = await PaymentModel.findByIdAndUpdate(id, {
-        refund: {
-          amount: refundAmount,
-          reason: reason || 'Admin initiated refund',
-          refundedAt: new Date().toISOString(),
-          refundedBy: context.user.id,
-        },
-        status: 'refunded',
-      }, { new: true });
-
-      return entityToJSON(updated);
+      throw new GraphQLError('Refunds must be processed via the admin dashboard for now.', {
+        extensions: { code: 'NOT_IMPLEMENTED' },
+      });
     },
   },
 };
