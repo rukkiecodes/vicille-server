@@ -48,12 +48,18 @@ const paymentTypeDefs = gql`
     ): PaymentConnection!
     myPayments(pagination: PaginationInput): PaymentConnection!
     myPaymentMethods: [PaymentMethod!]!
+    resolveAccount(accountNumber: String!, bankCode: String!): ResolvedAccount
+  }
+
+  type ResolvedAccount {
+    accountName:   String!
+    accountNumber: String!
   }
 
   # ── Mutations ───────────────────────────────────────────────────────────────
 
   extend type Mutation {
-    initializeSubscriptionPayment(planId: ID!): SubscriptionPaymentInit!
+    initializeSubscriptionPayment(planId: ID!, input: DirectDebitInput): SubscriptionPaymentInit!
     verifyPayment(reference: String!):          Payment!
     refundPayment(id: ID!, amount: Float, reason: String): Payment!
   }
@@ -65,6 +71,14 @@ const paymentTypeDefs = gql`
     paymentType: String
     user:        ID
     order:       ID
+  }
+
+  input DirectDebitInput {
+    accountNumber: String!
+    bankCode:      String!
+    addressStreet: String!
+    addressCity:   String!
+    addressState:  String!
   }
 `;
 

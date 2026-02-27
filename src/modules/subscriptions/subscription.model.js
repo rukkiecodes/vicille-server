@@ -88,6 +88,7 @@ const SubscriptionModel = {
     const colMap = {
       status:          'status',
       billing:         'billing',
+      nextBillingDate: 'next_billing_date',
       currentCycle:    'current_cycle',
       paymentStatus:   'payment_status',
       gracePeriodEnds: 'grace_period_ends',

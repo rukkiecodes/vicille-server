@@ -61,6 +61,12 @@ const paymentResolvers = {
       const authUser = requireAuth(context);
       return callPay('GET', `/payment/methods/${authUser.id}`);
     },
+
+    resolveAccount: async (_, { accountNumber, bankCode }, context) => {
+      requireAuth(context);
+      const result = await callPay('GET', `/payment/resolve-account?accountNumber=${accountNumber}&bankCode=${bankCode}`);
+      return { accountName: result.account_name, accountNumber: result.account_number };
+    },
   },
 
   Mutation: {
@@ -69,7 +75,7 @@ const paymentResolvers = {
      * Creates a pending subscription in DB then asks vicelle-pay to initialize
      * the Paystack transaction. Returns a redirect URL for the app to open.
      */
-    initializeSubscriptionPayment: async (_, { planId }, context) => {
+    initializeSubscriptionPayment: async (_, { planId, input }, context) => {
       const authUser = requireAuth(context);
 
       // Import locally to avoid circular deps
@@ -116,6 +122,8 @@ const paymentResolvers = {
         subscriptionId: sub.entityId || sub.id,
         email:          user?.email || authUser.email,
         amount:         amountInKobo,
+        // Forward bank + address details so Paystack page is pre-filled
+        ...(input || {}),
       });
 
       return result; // { redirectUrl, reference, paymentId }

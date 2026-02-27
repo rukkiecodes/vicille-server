@@ -34,6 +34,7 @@ router.post('/subscription-event', async (req, res) => {
         const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         await SubscriptionModel.findByIdAndUpdate(subscriptionId, {
           status:          'active',
+          billing:         { nextBillingDate: nextBillingDate.toISOString() },
           nextBillingDate,
           paymentStatus:   'paid',
         });
@@ -49,9 +50,9 @@ router.post('/subscription-event', async (req, res) => {
         if (!subscriptionId) break;
         const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         await SubscriptionModel.findByIdAndUpdate(subscriptionId, {
+          billing:       { nextBillingDate: nextBillingDate.toISOString() },
           nextBillingDate,
-          paymentStatus:        'paid',
-          paymentFailureCount:  0,
+          paymentStatus: 'paid',
         });
         logger.info('[internal] subscription renewed', { subscriptionId });
         break;
