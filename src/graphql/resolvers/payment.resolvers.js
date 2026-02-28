@@ -62,23 +62,18 @@ const paymentResolvers = {
       return callPay('GET', `/payment/methods/${authUser.id}`);
     },
 
-    resolveAccount: async (_, { accountNumber, bankCode }, context) => {
-      requireAuth(context);
-      const result = await callPay('GET', `/payment/resolve-account?accountNumber=${accountNumber}&bankCode=${bankCode}`);
-      return { accountName: result.account_name, accountNumber: result.account_number };
-    },
   },
 
   Mutation: {
     /**
      * Main subscription entry point.
      * Creates a pending subscription in DB then asks vicelle-pay to initialize
-     * the Paystack transaction. Returns a redirect URL for the app to open.
+     * a Paystack card checkout. Returns the authorization_url for the app to open.
+     * The card used is saved as a reusable authorization for future monthly charges.
      */
-    initializeSubscriptionPayment: async (_, { planId, input }, context) => {
+    initializeSubscriptionPayment: async (_, { planId }, context) => {
       const authUser = requireAuth(context);
 
-      // Import locally to avoid circular deps
       const { default: SubscriptionPlanModel } = await import('../../modules/subscriptions/subscriptionPlan.model.js');
       const { default: SubscriptionModel }     = await import('../../modules/subscriptions/subscription.model.js');
       const { default: UserModel }             = await import('../../modules/users/user.model.js');
@@ -99,21 +94,18 @@ const paymentResolvers = {
           });
         }
         if (s.status === 'pending_payment') {
-          await SubscriptionModel.findByIdAndUpdate(s.entityId || s.id, {
-            status: 'cancelled',
-          });
+          await SubscriptionModel.findByIdAndUpdate(s.entityId || s.id, { status: 'cancelled' });
         }
       }
 
-      // Create subscription in pending_payment state
       const sub = await SubscriptionModel.create({
-        user:   authUser.id,
-        plan:   planId,
-        status: 'pending_payment',
+        user:          authUser.id,
+        plan:          planId,
+        status:        'pending_payment',
         paymentStatus: 'pending',
       });
 
-      const user = await UserModel.findById(authUser.id);
+      const user         = await UserModel.findById(authUser.id);
       const amountInKobo = Math.round((plan.pricing?.amount || 0) * 100);
 
       const result = await callPay('POST', '/payment/initialize', {
@@ -122,8 +114,6 @@ const paymentResolvers = {
         subscriptionId: sub.entityId || sub.id,
         email:          user?.email || authUser.email,
         amount:         amountInKobo,
-        // Forward bank + address details so Paystack page is pre-filled
-        ...(input || {}),
       });
 
       return result; // { redirectUrl, reference, paymentId }

@@ -40,6 +40,7 @@ function format(row) {
     failedLoginAttempts:     row.failed_login_attempts,
     lastLoginAt:             row.last_login_at,
     createdByAdminId:        row.created_by_admin_id,
+    paystackCustomerCode:    row.paystack_customer_code,
     isDeleted:               row.is_deleted,
     createdAt:               row.created_at,
     updatedAt:               row.updated_at,
@@ -120,6 +121,7 @@ const UserModel = {
       birthdayPackageEligible: 'birthday_package_eligible',
       failedLoginAttempts:     'failed_login_attempts',
       lastLoginAt:             'last_login_at',
+      paystackCustomerCode:    'paystack_customer_code',
       isDeleted:               'is_deleted',
       deletedAt:               'deleted_at',
     };

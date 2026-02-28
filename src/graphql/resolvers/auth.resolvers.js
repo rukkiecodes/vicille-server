@@ -52,6 +52,31 @@ const authResolvers = {
         const refreshToken = generateRefreshToken(tokenPayload);
         const updatedUser  = await UserModel.findById(user.entityId);
 
+        // Fire-and-forget: register user as a Paystack customer if not already done.
+        // This ensures they have a customer_code before they ever try to subscribe.
+        if (!updatedUser.paystackCustomerCode) {
+          const PAY_URL = process.env.VICELLE_PAY_URL || 'http://localhost:5000';
+          const PAY_KEY = process.env.INTERNAL_SERVICE_KEY || '';
+          fetch(`${PAY_URL}/payment/customer/ensure`, {
+            method:  'POST',
+            headers: { 'x-service-key': PAY_KEY, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              userId:    updatedUser.entityId,
+              email:     updatedUser.email,
+              firstName: updatedUser.fullName?.split(' ')[0],
+              lastName:  updatedUser.fullName?.split(' ').slice(1).join(' '),
+            }),
+          })
+            .then(r => r.json())
+            .then(({ customerCode }) => {
+              if (customerCode) {
+                UserModel.findByIdAndUpdate(updatedUser.entityId, { paystackCustomerCode: customerCode })
+                  .catch(() => {});
+              }
+            })
+            .catch(() => {}); // never blocks login
+        }
+
         return { accessToken, refreshToken, user: updatedUser.toSafeJSON(), type: 'user' };
       } catch (error) {
         if (error instanceof GraphQLError) throw error;
