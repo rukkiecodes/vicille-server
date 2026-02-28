@@ -53,7 +53,7 @@ const paymentTypeDefs = gql`
   # ── Mutations ───────────────────────────────────────────────────────────────
 
   extend type Mutation {
-    initializeSubscriptionPayment(planId: ID!): SubscriptionPaymentInit!
+    initializeSubscriptionPayment(planId: ID!, callbackUrl: String): SubscriptionPaymentInit!
     verifyPayment(reference: String!):          Payment!
     refundPayment(id: ID!, amount: Float, reason: String): Payment!
   }

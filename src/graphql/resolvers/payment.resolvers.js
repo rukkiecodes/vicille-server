@@ -71,7 +71,7 @@ const paymentResolvers = {
      * a Paystack card checkout. Returns the authorization_url for the app to open.
      * The card used is saved as a reusable authorization for future monthly charges.
      */
-    initializeSubscriptionPayment: async (_, { planId }, context) => {
+    initializeSubscriptionPayment: async (_, { planId, callbackUrl }, context) => {
       const authUser = requireAuth(context);
 
       const { default: SubscriptionPlanModel } = await import('../../modules/subscriptions/subscriptionPlan.model.js');
@@ -114,6 +114,7 @@ const paymentResolvers = {
         subscriptionId: sub.entityId || sub.id,
         email:          user?.email || authUser.email,
         amount:         amountInKobo,
+        callbackUrl:    callbackUrl || undefined,
       });
 
       return result; // { redirectUrl, reference, paymentId }
