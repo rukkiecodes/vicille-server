@@ -120,6 +120,66 @@ const paymentResolvers = {
       return result; // { redirectUrl, reference, paymentId }
     },
 
+    /**
+     * PayPal Vault: vault card + charge in one call (no browser redirect).
+     * Creates a pending subscription, forwards card to vicelle-pay, returns
+     * { subscriptionId, paymentId, status } directly in the mutation response.
+     */
+    subscribeWithCard: async (_, { planId, card }, context) => {
+      const authUser = requireAuth(context);
+
+      const { default: SubscriptionPlanModel } = await import('../../modules/subscriptions/subscriptionPlan.model.js');
+      const { default: SubscriptionModel }     = await import('../../modules/subscriptions/subscription.model.js');
+      const { default: UserModel }             = await import('../../modules/users/user.model.js');
+
+      const plan = await SubscriptionPlanModel.findById(planId);
+      if (!plan) {
+        throw new GraphQLError('Subscription plan not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      // Cancel any existing pending_payment subscription before starting fresh
+      const existing = await SubscriptionModel.findByUser(authUser.id);
+      for (const s of existing) {
+        if (s.status === 'active') {
+          throw new GraphQLError('You already have an active subscription.', {
+            extensions: { code: 'CONFLICT' },
+          });
+        }
+        if (s.status === 'pending_payment') {
+          await SubscriptionModel.findByIdAndUpdate(s.entityId || s.id, { status: 'cancelled' });
+        }
+      }
+
+      const sub = await SubscriptionModel.create({
+        user:          authUser.id,
+        plan:          planId,
+        status:        'pending_payment',
+        paymentStatus: 'pending',
+      });
+
+      const user           = await UserModel.findById(authUser.id);
+      const subscriptionId = sub.entityId || sub.id;
+
+      const result = await callPay('POST', '/payment/subscribe-with-card', {
+        userId:         authUser.id,
+        planId,
+        subscriptionId,
+        email:          user?.email || authUser.email,
+        amount:         plan.pricing?.amount || 0,
+        currency:       plan.pricing?.currency || 'USD',
+        card,
+      });
+
+      return {
+        subscriptionId,
+        paymentId: result.paymentId,
+        status:    result.status,   // 'activated'
+        message:   null,
+      };
+    },
+
     verifyPayment: async (_, { reference }, context) => {
       requireAuth(context);
       return callPay('GET', `/payment/status/${reference}`);
