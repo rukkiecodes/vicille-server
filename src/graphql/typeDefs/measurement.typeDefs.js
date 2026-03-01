@@ -29,25 +29,36 @@ const measurementTypeDefs = gql`
   }
 
   type BodyMeasurements {
-    neck: Float
-    shoulder: Float
-    chest: Float
-    armLength: Float
-    sleeveLength: Float
-    wrist: Float
-    aroundArm: Float
-    topLength: Float
-    waist: Float
-    stomach: Float
-    hips: Float
-    trouserLength: Float
-    inseam: Float
-    thigh: Float
-    knee: Float
-    ankle: Float
-    crotch: Float
-    weight: Float
-    height: Float
+    # ── Shared ───────────────────────────────────────────────────────────────
+    neck:          Float   # Base of throat / neck
+    shoulder:      Float   # Bone-to-bone across the back
+    sleeveLength:  Float   # Shoulder tip to wrist/elbow
+    waist:         Float   # Belt level (male) / narrowest natural torso (female)
+    hips:          Float   # Fullest part of buttocks
+    thigh:         Float   # Widest part of upper leg
+    knee:          Float   # Mid-leg circumference
+    ankle:         Float   # Leg opening / bottom width
+    trouserLength: Float   # Waistline to floor/ankle
+    crotch:        Float   # Rise — front waist through legs to back waist
+    weight:        Float
+    height:        Float
+
+    # ── Male-specific ─────────────────────────────────────────────────────
+    chest:         Float   # Fullest part of chest (male)
+    stomach:       Float   # Belly / midsection
+    topLength:     Float   # Shirt/top length — shoulder-neck point to hem
+    wrist:         Float   # Cuff — around the wrist
+
+    # ── Female-specific ───────────────────────────────────────────────────
+    bust:          Float   # Fullest part of chest (female — critical)
+    underbust:     Float   # Directly under bra line
+    highWaist:     Float   # Narrowest waist point (for skirts/trousers)
+    aroundArm:     Float   # Armhole / bicep — widest part of upper arm
+    gownLength:    Float   # Shoulder to desired hem (dresses)
+
+    # ── Legacy (kept for backward compatibility) ──────────────────────────
+    armLength:     Float
+    inseam:        Float
   }
 
   type MeasurementConnection {
@@ -102,25 +113,33 @@ const measurementTypeDefs = gql`
   }
 
   input BodyMeasurementsInput {
+    # Shared
     neck: Float
     shoulder: Float
-    chest: Float
-    armLength: Float
     sleeveLength: Float
-    wrist: Float
-    aroundArm: Float
-    topLength: Float
     waist: Float
-    stomach: Float
     hips: Float
-    trouserLength: Float
-    inseam: Float
     thigh: Float
     knee: Float
     ankle: Float
+    trouserLength: Float
     crotch: Float
     weight: Float
     height: Float
+    # Male-specific
+    chest: Float
+    stomach: Float
+    topLength: Float
+    wrist: Float
+    # Female-specific
+    bust: Float
+    underbust: Float
+    highWaist: Float
+    aroundArm: Float
+    gownLength: Float
+    # Legacy
+    armLength: Float
+    inseam: Float
   }
 `;
 
