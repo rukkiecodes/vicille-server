@@ -26,18 +26,23 @@ app.use(
   })
 );
 
-// CORS configuration — allow any origin in the whitelist
+// CORS — allow whitelisted origins + any localhost (any port) for local dev
 const allowedOrigins = new Set(config.cors.origins);
 app.use(
   cors({
     origin: (origin, cb) => {
-      // Allow requests with no origin (mobile apps, server-to-server, curl)
-      if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+      // No origin = mobile app, curl, server-to-server — always allow
+      if (!origin) return cb(null, true);
+      // Any localhost port — always allow (dev/admin/tools)
+      if (origin.includes('localhost') || origin.includes('127.0.0.1')) return cb(null, true);
+      // Explicit whitelist
+      if (allowedOrigins.has(origin)) return cb(null, true);
       cb(new Error(`CORS: origin '${origin}' not allowed`));
     },
     credentials: config.cors.credentials,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+    optionsSuccessStatus: 200,   // some browsers (IE11) choke on 204
   })
 );
 
