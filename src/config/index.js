@@ -152,9 +152,13 @@ const config = {
     ttlSeconds: 86400 * 7, // 7 days
   },
 
-  // CORS
+  // CORS — CORS_ORIGINS is a comma-separated list of allowed origins.
+  // Falls back to SOCKET_CORS_ORIGIN for backwards compatibility.
   cors: {
-    origin: process.env.SOCKET_CORS_ORIGIN || 'http://localhost:3000',
+    origins: (process.env.CORS_ORIGINS || process.env.SOCKET_CORS_ORIGIN || 'http://localhost:3000')
+      .split(',')
+      .map(o => o.trim())
+      .filter(Boolean),
     credentials: true,
   },
 };

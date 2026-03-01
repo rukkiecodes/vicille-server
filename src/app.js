@@ -26,10 +26,15 @@ app.use(
   })
 );
 
-// CORS configuration
+// CORS configuration — allow any origin in the whitelist
+const allowedOrigins = new Set(config.cors.origins);
 app.use(
   cors({
-    origin: config.cors.origin,
+    origin: (origin, cb) => {
+      // Allow requests with no origin (mobile apps, server-to-server, curl)
+      if (!origin || allowedOrigins.has(origin)) return cb(null, true);
+      cb(new Error(`CORS: origin '${origin}' not allowed`));
+    },
     credentials: config.cors.credentials,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
