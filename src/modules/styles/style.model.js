@@ -45,12 +45,12 @@ const StyleModel = {
         slug,
         data.description || null,
         data.category || null,
-        data.images || [],
-        data.tags || [],
-        data.keywords || [],
+        JSON.stringify(data.images || []),           // JSONB
+        data.tags || [],                             // TEXT[]
+        data.keywords || [],                         // TEXT[]
         data.source || 'manual',
         data.searchQuery || null,
-        data.searchResults || null,
+        data.searchResults ? JSON.stringify(data.searchResults) : null,  // JSONB
         data.isActive !== false,
         data.createdBy || null,
       ]
@@ -87,8 +87,13 @@ const StyleModel = {
     const fields = [];
     const values = [];
     let i = 1;
+    // JSONB columns must be serialised before passing to pg
+    const jsonbKeys = new Set(['images', 'searchResults']);
     for (const [jsKey, dbCol] of Object.entries(colMap)) {
-      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+      if (jsKey in updates) {
+        fields.push(`${dbCol}=$${i++}`);
+        values.push(jsonbKeys.has(jsKey) ? JSON.stringify(updates[jsKey]) : updates[jsKey]);
+      }
     }
     if (!fields.length) return this.findById(id);
     values.push(id);
