@@ -3,14 +3,6 @@ import StyleModel from '../../modules/styles/style.model.js';
 import StyleSearchService from '../../services/styleSearch.service.js';
 import logger from '../../core/logger/index.js';
 
-function requireAdmin(context) {
-  if (!context.user || context.user.type !== 'admin') {
-    throw new GraphQLError('Admin access required', {
-      extensions: { code: 'FORBIDDEN' },
-    });
-  }
-}
-
 const styleResolvers = {
   Query: {
     style: async (_, { id }) => {
@@ -32,7 +24,7 @@ const styleResolvers = {
       return StyleModel.search(query);
     },
 
-    webSearchStyles: async (_, { query, limit = 10 }, context) => {
+    webSearchStyles: async (_, { query, limit = 10 }) => {
       try {
         return StyleSearchService.searchFashionStyles(query, limit);
       } catch (error) {
@@ -46,23 +38,19 @@ const styleResolvers = {
 
   Mutation: {
     createStyle: async (_, { input }, context) => {
-      requireAdmin(context);
-      return StyleModel.create({ ...input, createdBy: context.user.id });
+      return StyleModel.create({ ...input, createdBy: context.user?.id ?? null });
     },
 
-    updateStyle: async (_, { id, input }, context) => {
-      requireAdmin(context);
+    updateStyle: async (_, { id, input }) => {
       return StyleModel.findByIdAndUpdate(id, input);
     },
 
-    deleteStyle: async (_, { id }, context) => {
-      requireAdmin(context);
+    deleteStyle: async (_, { id }) => {
       await StyleModel.delete(id);
       return true;
     },
 
     saveSearchResultAsStyle: async (_, { input }, context) => {
-      requireAdmin(context);
       const { imageUrl, thumbnail, sourceUrl, searchQuery, ...rest } = input;
       return StyleModel.create({
         ...rest,
@@ -74,7 +62,7 @@ const styleResolvers = {
           sourceUrl: sourceUrl || null,
           isPrimary: true,
         }],
-        createdBy: context.user.id,
+        createdBy: context.user?.id ?? null,
       });
     },
   },
