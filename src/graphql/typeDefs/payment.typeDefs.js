@@ -39,6 +39,17 @@ const paymentTypeDefs = gql`
     createdAt:           DateTime
   }
 
+  type NigeriaBank {
+    name: String!
+    code: String!
+  }
+
+  type NigeriaAccountVerification {
+    accountName: String!
+    accountNumber: String!
+    bankCode: String!
+  }
+
   type PaymentConnection {
     nodes:    [Payment!]!
     pageInfo: PageInfo!
@@ -71,6 +82,7 @@ const paymentTypeDefs = gql`
     ): PaymentConnection!
     myPayments(pagination: PaginationInput): PaymentConnection!
     myPaymentMethods: [PaymentMethod!]!
+    nigeriaBanks: [NigeriaBank!]!
   }
 
   # ── Mutations ───────────────────────────────────────────────────────────────
@@ -83,6 +95,7 @@ const paymentTypeDefs = gql`
     initializeSubscriptionPayment(planId: ID!, callbackUrl: String): SubscriptionPaymentInit!
     verifyPayment(reference: String!):                Payment!
     refundPayment(id: ID!, amount: Float, reason: String): Payment!
+    verifyNigeriaBankAccount(bankCode: String!, accountNumber: String!): NigeriaAccountVerification!
   }
 `;
 

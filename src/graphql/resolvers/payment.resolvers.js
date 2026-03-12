@@ -84,6 +84,11 @@ const paymentResolvers = {
       return callPay('GET', `/payment/methods/${authUser.id}`);
     },
 
+    nigeriaBanks: async (_, __, context) => {
+      requireAuth(context);
+      return callPay('GET', '/payment/banks');
+    },
+
   },
 
   Mutation: {
@@ -210,6 +215,12 @@ const paymentResolvers = {
     refundPayment: async (_, { id, reason }, context) => {
       requireAdmin(context);
       return callPay('POST', `/payment/refund/${id}`, { reason });
+    },
+
+    verifyNigeriaBankAccount: async (_, { bankCode, accountNumber }, context) => {
+      requireAuth(context);
+      const query = `?bankCode=${encodeURIComponent(bankCode)}&accountNumber=${encodeURIComponent(accountNumber)}`;
+      return callPay('GET', `/payment/resolve-account${query}`);
     },
   },
 };
