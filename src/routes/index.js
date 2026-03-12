@@ -7,7 +7,7 @@ const router = Router();
 // Health check routes
 router.use('/', healthRoutes);
 
-// Internal service-to-service routes (from vicelle-pay)
+// Internal service-to-service routes (from payments service)
 router.use('/internal', internalRoutes);
 
 export default router;

@@ -1,10 +1,11 @@
 /**
- * Internal event endpoint — receives subscription lifecycle events from vicelle-pay.
+ * Internal event endpoint — receives subscription lifecycle events from the payments service.
  * Protected by the shared x-service-key header.
  */
 import { Router } from 'express';
 import SubscriptionModel from '../modules/subscriptions/subscription.model.js';
 import UserModel from '../modules/users/user.model.js';
+import ReferralModel from '../modules/referrals/referral.model.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -20,17 +21,19 @@ router.use((req, res, next) => {
 
 // ── POST /internal/subscription-event ────────────────────────────────────────
 router.post('/subscription-event', async (req, res) => {
-  // Always respond immediately so vicelle-pay doesn't time out
+  // Always respond immediately so the payment service doesn't time out
   res.status(200).json({ received: true });
 
-  const { type, userId, subscriptionId, retryAt, amount } = req.body;
+  const { type, userId, subscriptionId, retryAt } = req.body;
   logger.info(`[internal] subscription-event: ${type}`, { userId, subscriptionId });
 
   try {
     switch (type) {
 
       case 'SUBSCRIPTION_ACTIVATED': {
-        if (!subscriptionId || !userId) break;
+        if (!subscriptionId || !userId) {
+          break;
+        }
         const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         await SubscriptionModel.findByIdAndUpdate(subscriptionId, {
           status:          'active',
@@ -42,12 +45,33 @@ router.post('/subscription-event', async (req, res) => {
           subscriptionStatus:  'active',
           currentSubscription: subscriptionId,
         });
+
+        const rewardAmount = Number(process.env.REFERRAL_REWARD_AMOUNT || 2000);
+        const rewardCurrency = process.env.REFERRAL_REWARD_CURRENCY || 'NGN';
+        const reward = await ReferralModel.rewardInviteForSubscription({
+          invitedUserId: userId,
+          subscriptionId,
+          rewardAmount,
+          rewardCurrency,
+        });
+
+        if (reward) {
+          logger.info('[internal] referral reward credited', {
+            inviterUserId: reward.inviterUserId,
+            invitedUserId: userId,
+            rewardAmount: reward.rewardAmount,
+            rewardCurrency: reward.rewardCurrency,
+          });
+        }
+
         logger.info('[internal] subscription activated', { subscriptionId });
         break;
       }
 
       case 'PAYMENT_SUCCESS': {
-        if (!subscriptionId) break;
+        if (!subscriptionId) {
+          break;
+        }
         const nextBillingDate = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
         await SubscriptionModel.findByIdAndUpdate(subscriptionId, {
           billing:       { nextBillingDate: nextBillingDate.toISOString() },
@@ -59,7 +83,9 @@ router.post('/subscription-event', async (req, res) => {
       }
 
       case 'SUBSCRIPTION_PAYMENT_FAILED': {
-        if (!subscriptionId || !userId) break;
+        if (!subscriptionId || !userId) {
+          break;
+        }
         await SubscriptionModel.findByIdAndUpdate(subscriptionId, {
           status:        'payment_failed',
           paymentStatus: 'failed',

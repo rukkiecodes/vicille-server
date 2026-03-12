@@ -55,7 +55,7 @@ const authResolvers = {
         // Fire-and-forget: register user as a Paystack customer if not already done.
         // This ensures they have a customer_code before they ever try to subscribe.
         if (!updatedUser.paystackCustomerCode) {
-          const PAY_URL = process.env.VICELLE_PAY_URL || 'http://localhost:5000';
+          const PAY_URL = process.env.PAYMENTS_SERVICE_URL || process.env.VICELLE_PAY_URL || 'http://localhost:5000';
           const PAY_KEY = process.env.INTERNAL_SERVICE_KEY || '';
           fetch(`${PAY_URL}/payment/customer/ensure`, {
             method:  'POST',

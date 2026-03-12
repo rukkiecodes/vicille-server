@@ -36,6 +36,7 @@ const measurementResolvers = {
       requireAuth(context);
       const page = pagination.page || 1;
       const limit = pagination.limit || 20;
+      const offset = (page - 1) * limit;
 
       const query = {};
       if (filter.user) {
@@ -51,8 +52,9 @@ const measurementResolvers = {
         query.queuedForCycle = filter.queuedForCycle;
       }
 
-      const measurements = await MeasurementModel.find(query, { page, limit });
-      const total = await MeasurementModel.countDocuments(query);
+      const result = await MeasurementModel.find(query, { limit, offset });
+      const measurements = result.data || [];
+      const total = result.pagination?.total || 0;
 
       return buildPaginatedResponse(entitiesToJSON(measurements), total, page, limit);
     },

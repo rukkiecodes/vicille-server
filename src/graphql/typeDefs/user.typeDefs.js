@@ -14,6 +14,8 @@ const userTypeDefs = gql`
     profilePhoto: ProfilePhoto
     deliveryDetails: DeliveryDetails
     paymentMethods: [PaymentMethod!]
+    referralBalance: Float
+    referralTotalEarned: Float
     subscriptionStatus: String
     currentSubscription: ID
     accountStatus: String!

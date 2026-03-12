@@ -57,6 +57,7 @@ const orderResolvers = {
       requireAdmin(context);
       const page = pagination.page || 1;
       const limit = pagination.limit || 20;
+      const offset = (page - 1) * limit;
 
       const query = {};
       if (filter.status) {
@@ -72,8 +73,9 @@ const orderResolvers = {
         query.paymentStatus = filter.paymentStatus;
       }
 
-      const orders = await OrderModel.find(query, { page, limit });
-      const total = await OrderModel.countDocuments(query);
+      const result = await OrderModel.find(query, { limit, offset });
+      const orders = result.data || [];
+      const total = result.pagination?.total || 0;
 
       return buildPaginatedResponse(entitiesToJSON(orders), total, page, limit);
     },
@@ -82,9 +84,11 @@ const orderResolvers = {
       const authUser = requireAuth(context);
       const page = pagination.page || 1;
       const limit = pagination.limit || 20;
+      const offset = (page - 1) * limit;
 
-      const orders = await OrderModel.findByUser(authUser.id, { limit });
-      const total = await OrderModel.countDocuments({ user: authUser.id });
+      const result = await OrderModel.find({ user: authUser.id }, { limit, offset });
+      const orders = result.data || [];
+      const total = result.pagination?.total || 0;
 
       return buildPaginatedResponse(entitiesToJSON(orders), total, page, limit);
     },
@@ -154,7 +158,7 @@ const orderResolvers = {
       return entityToJSON(item);
     },
 
-    removeOrderItem: async (_, { orderId, itemId }, context) => {
+    removeOrderItem: async (_, { orderId: _orderId, itemId }, context) => {
       requireAuth(context);
       await OrderItemModel.delete(itemId);
       return { success: true, message: 'Order item removed' };

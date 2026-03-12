@@ -1,13 +1,31 @@
 /**
- * Payment resolvers — thin proxy to vicelle-pay microservice.
+ * Payment resolvers — thin proxy to the payments microservice.
  * No payment logic lives here; all calls are forwarded via HTTP.
  */
 import { GraphQLError } from 'graphql';
 import { requireAuth, requireAdmin } from '../helpers.js';
 import logger from '../../core/logger/index.js';
 
-const PAY_URL = process.env.VICELLE_PAY_URL  || 'http://localhost:5000';
+const PAY_URL = process.env.PAYMENTS_SERVICE_URL || process.env.VICELLE_PAY_URL || 'http://localhost:5000';
 const PAY_KEY = process.env.INTERNAL_SERVICE_KEY || '';
+
+function buildConnectionFromService(result, page, limit) {
+  const nodes = result?.data || [];
+  const total = result?.pagination?.total || 0;
+  const totalPages = result?.pagination?.totalPages || Math.ceil(total / limit);
+
+  return {
+    nodes,
+    pageInfo: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    },
+  };
+}
 
 async function callPay(method, path, body) {
   const res = await fetch(`${PAY_URL}${path}`, {
@@ -35,16 +53,17 @@ async function callPay(method, path, body) {
 
 const paymentResolvers = {
   Query: {
-    myPayments: async (_, __, context) => {
+    myPayments: async (_, { pagination = {} }, context) => {
       const authUser = requireAuth(context);
-      // vicelle-pay doesn't expose a paginated payments list yet — return empty
-      // (can be expanded once vicelle-pay has GET /payment/list/:userId)
-      return { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+      const page = pagination.page || 1;
+      const limit = pagination.limit || 20;
+      const result = await callPay('GET', `/payment/list/${authUser.id}?page=${page}&limit=${limit}`);
+      return buildConnectionFromService(result, page, limit);
     },
 
     payment: async (_, { id }, context) => {
       requireAuth(context);
-      return callPay('GET', `/payment/status/${id}`);
+      return callPay('GET', `/payment/id/${id}`);
     },
 
     paymentByReference: async (_, { reference }, context) => {
@@ -52,9 +71,12 @@ const paymentResolvers = {
       return callPay('GET', `/payment/status/${reference}`);
     },
 
-    payments: async (_, __, context) => {
+    payments: async (_, { pagination = {} }, context) => {
       requireAdmin(context);
-      return { nodes: [], pageInfo: { hasNextPage: false, endCursor: null } };
+      const page = pagination.page || 1;
+      const limit = pagination.limit || 20;
+      const result = await callPay('GET', `/payment/list?page=${page}&limit=${limit}`);
+      return buildConnectionFromService(result, page, limit);
     },
 
     myPaymentMethods: async (_, __, context) => {
@@ -67,7 +89,7 @@ const paymentResolvers = {
   Mutation: {
     /**
      * Main subscription entry point.
-     * Creates a pending subscription in DB then asks vicelle-pay to initialize
+      * Creates a pending subscription in DB then asks the payments service to initialize
      * a Paystack card checkout. Returns the authorization_url for the app to open.
      * The card used is saved as a reusable authorization for future monthly charges.
      */
@@ -122,7 +144,7 @@ const paymentResolvers = {
 
     /**
      * PayPal Vault: vault card + charge in one call (no browser redirect).
-     * Creates a pending subscription, forwards card to vicelle-pay, returns
+      * Creates a pending subscription, forwards card to payments service, returns
      * { subscriptionId, paymentId, status } directly in the mutation response.
      */
     subscribeWithCard: async (_, { planId, card }, context) => {
@@ -185,12 +207,9 @@ const paymentResolvers = {
       return callPay('GET', `/payment/status/${reference}`);
     },
 
-    // Keep admin refund wired (calls vicelle-pay once that endpoint exists)
-    refundPayment: async (_, { id }, context) => {
+    refundPayment: async (_, { id, reason }, context) => {
       requireAdmin(context);
-      throw new GraphQLError('Refunds must be processed via the admin dashboard for now.', {
-        extensions: { code: 'NOT_IMPLEMENTED' },
-      });
+      return callPay('POST', `/payment/refund/${id}`, { reason });
     },
   },
 };

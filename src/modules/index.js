@@ -17,9 +17,6 @@ export { default as OrderItem } from './orders/orderItem.model.js';
 // Job model
 export { default as Job } from './jobs/job.model.js';
 
-// Payment models
-export { default as Payment } from './payments/payment.model.js';
-export { default as PaymentAttempt } from './payments/paymentAttempt.model.js';
 export { default as Payout } from './payouts/payout.model.js';
 
 // Collection models
@@ -46,3 +43,6 @@ export { default as SpecialRequest } from './special-requests/specialRequest.mod
 // Accessory models
 export { default as Accessory } from './accessories/accessory.model.js';
 export { default as AccessoryOrder } from './accessories/accessoryOrder.model.js';
+
+// Referral model
+export { default as Referral } from './referrals/referral.model.js';

@@ -41,6 +41,8 @@ function format(row) {
     lastLoginAt:             row.last_login_at,
     createdByAdminId:        row.created_by_admin_id,
     paystackCustomerCode:    row.paystack_customer_code,
+    referralBalance:         Number(row.referral_balance || 0),
+    referralTotalEarned:     Number(row.referral_total_earned || 0),
     isDeleted:               row.is_deleted,
     createdAt:               row.created_at,
     updatedAt:               row.updated_at,
@@ -122,6 +124,8 @@ const UserModel = {
       failedLoginAttempts:     'failed_login_attempts',
       lastLoginAt:             'last_login_at',
       paystackCustomerCode:    'paystack_customer_code',
+      referralBalance:         'referral_balance',
+      referralTotalEarned:     'referral_total_earned',
       isDeleted:               'is_deleted',
       deletedAt:               'deleted_at',
     };

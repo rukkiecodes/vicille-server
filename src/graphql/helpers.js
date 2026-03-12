@@ -5,8 +5,9 @@ import { GraphQLError } from 'graphql';
  */
 export const requireAuth = (context) => {
   if (!context.user) {
-    // TEST MODE — remove this block before going to production
-    return { id: '00000000-0000-0000-0000-000000000000', type: 'admin', role: 'admin' };
+    throw new GraphQLError('Authentication required', {
+      extensions: { code: 'UNAUTHENTICATED' },
+    });
   }
   return context.user;
 };

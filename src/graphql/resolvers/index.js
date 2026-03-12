@@ -9,6 +9,7 @@ import jobResolvers from './job.resolvers.js';
 import paymentResolvers from './payment.resolvers.js';
 import adminResolvers from './admin.resolvers.js';
 import styleResolvers from './style.resolvers.js';
+import referralResolvers from './referral.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -22,6 +23,7 @@ const resolvers = [
   paymentResolvers,
   adminResolvers,
   styleResolvers,
+  referralResolvers,
 ];
 
 export default resolvers;
