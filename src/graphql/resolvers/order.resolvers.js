@@ -102,8 +102,11 @@ const orderResolvers = {
 
   Mutation: {
     createOrder: async (_, { input }, context) => {
-      requireAuth(context);
-      const order = await OrderModel.create(input);
+      const authUser = requireAuth(context);
+      const order = await OrderModel.create({
+        ...input,
+        user: authUser.id,
+      });
       return entityToJSON(order);
     },
 
