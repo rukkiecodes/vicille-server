@@ -6,6 +6,13 @@ import logger from '../../core/logger/index.js';
 
 const CACHE_TTL = 3600;
 
+function normalizeOrderType(value) {
+  const v = (value || '').toString().trim().toLowerCase();
+  if (v === 'subscription') return 'subscription';
+  // Keep legacy/custom client values compatible with DB constraint.
+  return 'special_request';
+}
+
 function format(row) {
   if (!row) return null;
   return {
@@ -89,7 +96,7 @@ const OrderModel = {
         clientTag,
         data.user || data.userId,
         data.subscription || data.subscriptionId || null,
-        data.orderType || 'subscription',
+        normalizeOrderType(data.orderType),
         data.totalAmount || 0,
         data.amountPaid || 0,
         data.outstandingBalance || 0,
