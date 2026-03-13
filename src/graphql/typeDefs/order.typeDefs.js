@@ -6,6 +6,9 @@ const orderTypeDefs = gql`
     orderNumber: String!
     clientTag: String
     user: ID!
+    customerName: String
+    customerEmail: String
+    customerPhone: String
     subscription: ID
     measurement: ID
     orderType: String!
@@ -96,6 +99,7 @@ const orderTypeDefs = gql`
 
   extend type Mutation {
     createOrder(input: CreateOrderInput!): Order!
+    updateOrder(id: ID!, input: UpdateOrderInput!): Order!
     updateOrderStatus(id: ID!, status: String!, notes: String): Order!
     cancelOrder(id: ID!, reason: String!): Order!
     updateOrderDelivery(id: ID!, input: OrderDeliveryInput!): Order!
@@ -132,6 +136,13 @@ const orderTypeDefs = gql`
     trackingNumber: String
     deliveryMethod: String
     deliveryAddress: JSON
+  }
+
+  input UpdateOrderInput {
+    orderType: String
+    deliveryAddress: JSON
+    deliveryMethod: String
+    notes: String
   }
 
   input OrderItemInput {

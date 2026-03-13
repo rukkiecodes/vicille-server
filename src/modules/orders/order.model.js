@@ -1,20 +1,28 @@
-import { query, getClient } from '../../infrastructure/database/postgres.js';
+import { query } from '../../infrastructure/database/postgres.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
 import { generateOrderNumber, generateClientTag } from '../../core/utils/randomCode.js';
-import { ORDER_STATUS, isValidTransition } from '../../core/constants/orderStatus.js';
-import logger from '../../core/logger/index.js';
-
+import {
+  ACCESSORY_PURCHASE_STATUSES,
+  CANCELLABLE_STATUSES,
+  ORDER_STATUS,
+  STYLING_WINDOW_OPEN_STATUSES,
+  isValidTransition,
+} from '../../core/constants/orderStatus.js';
 const CACHE_TTL = 3600;
 
 function normalizeOrderType(value) {
   const v = (value || '').toString().trim().toLowerCase();
-  if (v === 'subscription') return 'subscription';
+  if (v === 'subscription') {
+    return 'subscription';
+  }
   // Keep legacy/custom client values compatible with DB constraint.
   return 'special_request';
 }
 
 function format(row) {
-  if (!row) return null;
+  if (!row) {
+    return null;
+  }
   return {
     id:                    row.id,
     entityId:              row.id,
@@ -26,6 +34,10 @@ function format(row) {
     subscriptionId:        row.subscription_id,
     measurement:           row.measurement_id,
     measurementId:         row.measurement_id,
+    customerName:          row.customer_name,
+    customerEmail:         row.customer_email,
+    customerPhone:         row.customer_phone,
+    deliveryAddress:       row.delivery_address,
     stylingWindowId:       row.styling_window_id,
     orderType:             row.order_type,
     status:                row.status,
@@ -51,6 +63,9 @@ function format(row) {
       reason:      row.cancellation_reason,
       cancelledBy: row.cancelled_by,
     } : null,
+    isStylingWindowOpen:  STYLING_WINDOW_OPEN_STATUSES.includes(row.status) && Boolean(row.styling_window_open),
+    canBeCancelled:       CANCELLABLE_STATUSES.includes(row.status),
+    canPurchaseAccessories: ACCESSORY_PURCHASE_STATUSES.includes(row.status),
     notes:         row.notes,
     internalNotes: row.internal_notes,
     createdAt:     row.created_at,
@@ -89,10 +104,11 @@ const OrderModel = {
 
     const { rows } = await query(
       `INSERT INTO orders
-         (order_number, client_tag, user_id, subscription_id, measurement_id, order_type,
-          total_amount, amount_paid, outstanding_balance, payment_status,
-          delivery_method, notes, internal_notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
+        (order_number, client_tag, user_id, subscription_id, measurement_id, order_type,
+         customer_name, customer_email, customer_phone, delivery_address,
+         total_amount, amount_paid, outstanding_balance, payment_status,
+         delivery_method, notes, internal_notes)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`,
       [
         orderNumber,
         clientTag,
@@ -100,6 +116,10 @@ const OrderModel = {
         data.subscription || data.subscriptionId || null,
         data.measurement || data.measurementId || null,
         normalizeOrderType(data.orderType),
+        data.customerName || null,
+        data.customerEmail || null,
+        data.customerPhone || null,
+        data.deliveryAddress || null,
         data.totalAmount || 0,
         data.amountPaid || 0,
         data.outstandingBalance || 0,
@@ -122,10 +142,14 @@ const OrderModel = {
 
   async findById(id) {
     const cached = await getCachedOrder(id);
-    if (cached) return cached;
+    if (cached) {
+      return cached;
+    }
     const { rows } = await query('SELECT * FROM orders WHERE id=$1', [id]);
     const order = format(rows[0] || null);
-    if (order) await cacheOrder(order);
+    if (order) {
+      await cacheOrder(order);
+    }
     return order;
   },
 
@@ -141,6 +165,11 @@ const OrderModel = {
 
   async findByIdAndUpdate(id, updates) {
     const colMap = {
+      orderType:               'order_type',
+      customerName:            'customer_name',
+      customerEmail:           'customer_email',
+      customerPhone:           'customer_phone',
+      deliveryAddress:         'delivery_address',
       status:                  'status',
       stylingWindowOpen:       'styling_window_open',
       stylingWindowLockedAt:   'styling_window_locked_at',
@@ -169,7 +198,9 @@ const OrderModel = {
     for (const [jsKey, dbCol] of Object.entries(colMap)) {
       if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
     }
-    if (!fields.length) return this.findById(id);
+    if (!fields.length) {
+      return this.findById(id);
+    }
     values.push(id);
     const { rows } = await query(
       `UPDATE orders SET ${fields.join(',')} WHERE id=$${i} RETURNING *`, values
@@ -181,7 +212,9 @@ const OrderModel = {
 
   async updateStatus(id, newStatus, changedById, changedByRole, notes) {
     const order = await this.findById(id);
-    if (!order) return null;
+    if (!order) {
+      return null;
+    }
     if (!isValidTransition(order.status, newStatus)) {
       throw new Error(`Cannot transition from ${order.status} to ${newStatus}`);
     }
@@ -206,7 +239,9 @@ const OrderModel = {
 
   async cancelOrder(id, reason, cancelledBy) {
     const order = await this.findById(id);
-    if (!order) return null;
+    if (!order) {
+      return null;
+    }
     if (order.status !== ORDER_STATUS.STYLING_IN_PROGRESS) {
       throw new Error('Order cannot be cancelled at this stage');
     }
