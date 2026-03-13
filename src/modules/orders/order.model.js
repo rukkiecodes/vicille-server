@@ -24,6 +24,8 @@ function format(row) {
     userId:                row.user_id,
     subscription:          row.subscription_id,
     subscriptionId:        row.subscription_id,
+    measurement:           row.measurement_id,
+    measurementId:         row.measurement_id,
     stylingWindowId:       row.styling_window_id,
     orderType:             row.order_type,
     status:                row.status,
@@ -87,15 +89,16 @@ const OrderModel = {
 
     const { rows } = await query(
       `INSERT INTO orders
-         (order_number, client_tag, user_id, subscription_id, order_type,
+         (order_number, client_tag, user_id, subscription_id, measurement_id, order_type,
           total_amount, amount_paid, outstanding_balance, payment_status,
           delivery_method, notes, internal_notes)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *`,
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         orderNumber,
         clientTag,
         data.user || data.userId,
         data.subscription || data.subscriptionId || null,
+        data.measurement || data.measurementId || null,
         normalizeOrderType(data.orderType),
         data.totalAmount || 0,
         data.amountPaid || 0,

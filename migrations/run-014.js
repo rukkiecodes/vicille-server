@@ -1,0 +1,45 @@
+/**
+ * Adds measurement_id link on orders.
+ *
+ * Usage (run from the server/ directory):
+ *   node migrations/run-014.js
+ */
+import pg from 'pg';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+dotenv.config({ path: path.resolve(__dirname, '../.env') });
+
+const sql = fs.readFileSync(
+  path.join(__dirname, '014_orders_measurement_link.sql'),
+  'utf8'
+);
+
+const pool = new pg.Pool({
+  host: process.env.SUPERBASE_POOL_HOST,
+  port: parseInt(process.env.SUPERBASE_POOL_PORT, 10) || 5432,
+  database: process.env.SUPERBASE_POOL_DATABASE || 'postgres',
+  user: process.env.SUPERBASE_POOL_USER,
+  password: process.env.SUPERBASE_DB_PASSWORD,
+  ssl: { rejectUnauthorized: false },
+  connectionTimeoutMillis: 10000,
+});
+
+(async () => {
+  const client = await pool.connect();
+  try {
+    console.log('Running migration 014_orders_measurement_link ...');
+    await client.query(sql);
+    console.log('✅  Migration complete. orders.measurement_id is available.');
+  } catch (err) {
+    console.error('❌  Migration failed:', err.message);
+    process.exitCode = 1;
+  } finally {
+    client.release();
+    await pool.end();
+  }
+})();
