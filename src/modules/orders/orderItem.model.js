@@ -24,6 +24,15 @@ function format(row) {
 
 const OrderItemModel = {
   async create(data) {
+    const resolvedStyleName =
+      data.name ||
+      data.styleName ||
+      data.style?.title ||
+      data.style?.name ||
+      data.description ||
+      data.category ||
+      'Custom style';
+
     const { rows } = await query(
       `INSERT INTO order_items
          (order_id, collection_item_id, style_name, description, fabric, color, quantity, customizations, status)
@@ -31,7 +40,7 @@ const OrderItemModel = {
       [
         data.order || data.orderId,
         data.collectionItem || data.collectionItemId || null,
-        data.name || data.styleName,
+        resolvedStyleName,
         data.description || null,
         data.fabric || null,
         data.color || null,

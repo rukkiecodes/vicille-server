@@ -154,9 +154,18 @@ const orderResolvers = {
         });
       }
 
+      const derivedStyleName =
+        input?.style?.title ||
+        input?.style?.name ||
+        input?.description ||
+        input?.category ||
+        'Custom style';
+
       const item = await OrderItemModel.create({
         ...input,
         order: orderId,
+        styleName: derivedStyleName,
+        name: derivedStyleName,
       });
       return entityToJSON(item);
     },
