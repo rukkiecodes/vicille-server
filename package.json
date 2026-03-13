@@ -11,6 +11,7 @@
     "migrate": "node migrations/seed.js",
     "migrate:all": "node migrations/seed.js",
     "migrate:012": "node migrations/run-012.js",
+    "migrate:013": "node migrations/run-013.js",
     "test": "jest --coverage",
     "test:unit": "jest --testPathPattern=tests/unit",
     "test:integration": "jest --testPathPattern=tests/integration",

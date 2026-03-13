@@ -74,8 +74,11 @@ const measurementResolvers = {
 
   Mutation: {
     createMeasurement: async (_, { input }, context) => {
-      requireAuth(context);
-      const measurement = await MeasurementModel.create(input);
+      const authUser = requireAuth(context);
+      const measurement = await MeasurementModel.create({
+        ...input,
+        user: authUser.id,
+      });
       return entityToJSON(measurement);
     },
 

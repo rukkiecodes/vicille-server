@@ -3,6 +3,16 @@ import { getRedisClient } from '../../infrastructure/database/redis.js';
 
 const CACHE_TTL = 3600;
 
+function normalizeCapturedBy(capturedBy) {
+  const raw = typeof capturedBy === 'object'
+    ? (capturedBy?.type || capturedBy?.name || '')
+    : (capturedBy || '');
+  const value = String(raw).trim().toLowerCase();
+  if (value === 'tailor') return 'tailor';
+  if (value === 'vicelle_staff') return 'vicelle_staff';
+  return 'user';
+}
+
 function format(row) {
   if (!row) return null;
   return {
@@ -65,9 +75,9 @@ const MeasurementModel = {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *`,
       [
         userId,
-        data.source || null,
-        data.capturedBy || null,
-        data.measurements || null,
+        data.source || 'self',
+        normalizeCapturedBy(data.capturedBy),
+        data.measurements || {},
         data.fit || 'regular',
         data.version || version,
         data.previousVersion || previousVersion,
