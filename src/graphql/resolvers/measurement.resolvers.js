@@ -79,7 +79,10 @@ const measurementResolvers = {
         ...input,
         user: authUser.id,
       });
-      return entityToJSON(measurement);
+
+      // Newly submitted profile measurements should become the active set.
+      const activeMeasurement = await MeasurementModel.makeActive(measurement.id);
+      return entityToJSON(activeMeasurement || measurement);
     },
 
     updateMeasurement: async (_, { id, input }, context) => {
