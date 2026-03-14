@@ -7,6 +7,223 @@ import { ORDER_STATUS } from '../../core/constants/orderStatus.js';
 import { query as dbQuery } from '../../infrastructure/database/postgres.js';
 import logger from '../../core/logger/index.js';
 
+const DEFAULT_PAGE_LIMIT = 20;
+
+function getMonthWindowBounds(year, monthIndex) {
+  const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
+  const opensAt = new Date(Date.UTC(year, monthIndex, Math.max(1, lastDay - 6), 0, 0, 0, 0));
+  const closesAt = new Date(Date.UTC(year, monthIndex + 1, 7, 23, 59, 59, 999));
+  return { opensAt, closesAt };
+}
+
+function buildWindowStatus(isOpen, opensAt, closesAt, source = 'computed') {
+  const now = new Date();
+  const countdownTarget = isOpen ? closesAt : opensAt;
+  const countdownSeconds = Math.max(0, Math.floor((countdownTarget.getTime() - now.getTime()) / 1000));
+  return {
+    isOpen,
+    opensAt,
+    closesAt,
+    source,
+    countdownSeconds,
+  };
+}
+
+function getComputedStylingWindowStatus(now = new Date()) {
+  const year = now.getUTCFullYear();
+  const month = now.getUTCMonth();
+
+  const previousMonth = month === 0 ? 11 : month - 1;
+  const previousYear = month === 0 ? year - 1 : year;
+
+  const prevWindow = getMonthWindowBounds(previousYear, previousMonth);
+  const currentWindow = getMonthWindowBounds(year, month);
+
+  if (now >= prevWindow.opensAt && now <= prevWindow.closesAt) {
+    return buildWindowStatus(true, prevWindow.opensAt, prevWindow.closesAt, 'computed');
+  }
+
+  if (now >= currentWindow.opensAt && now <= currentWindow.closesAt) {
+    return buildWindowStatus(true, currentWindow.opensAt, currentWindow.closesAt, 'computed');
+  }
+
+  const nextWindow = now < currentWindow.opensAt
+    ? currentWindow
+    : getMonthWindowBounds(month === 11 ? year + 1 : year, month === 11 ? 0 : month + 1);
+
+  return buildWindowStatus(false, nextWindow.opensAt, nextWindow.closesAt, 'computed');
+}
+
+function formatStylingWindowConfig(row) {
+  if (!row) {
+    return {
+      overrideEnabled: false,
+      forceIsOpen: null,
+      overrideOpenAt: null,
+      overrideCloseAt: null,
+      notes: null,
+      updatedBy: null,
+      updatedAt: null,
+    };
+  }
+  return {
+    overrideEnabled: Boolean(row.override_enabled),
+    forceIsOpen: row.force_is_open,
+    overrideOpenAt: row.override_open_at,
+    overrideCloseAt: row.override_close_at,
+    notes: row.notes,
+    updatedBy: row.updated_by,
+    updatedAt: row.updated_at,
+  };
+}
+
+function formatQueueRow(row) {
+  if (!row) {
+    return null;
+  }
+  return {
+    id: row.id,
+    user: row.user_id,
+    measurement: row.measurement_id,
+    orderType: row.order_type,
+    category: row.category,
+    styleTitle: row.style_title,
+    styleDescription: row.style_description,
+    styleImageUrl: row.style_image_url,
+    stylePayload: row.style_payload,
+    source: row.source,
+    sourceUrl: row.source_url,
+    notes: row.notes,
+    status: row.status,
+    linkedOrderId: row.linked_order_id,
+    cancelReason: row.cancel_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function resolveStylingWindowStatus() {
+  const computed = getComputedStylingWindowStatus();
+  const { rows } = await dbQuery('SELECT * FROM styling_window_config WHERE id = 1 LIMIT 1');
+  const cfg = rows[0];
+
+  if (!cfg?.override_enabled) {
+    return computed;
+  }
+
+  if (cfg.force_is_open !== null && cfg.force_is_open !== undefined) {
+    const opensAt = cfg.override_open_at || computed.opensAt;
+    const closesAt = cfg.override_close_at || computed.closesAt;
+    return buildWindowStatus(Boolean(cfg.force_is_open), opensAt, closesAt, 'admin_force');
+  }
+
+  if (cfg.override_open_at && cfg.override_close_at) {
+    const now = new Date();
+    const isOpen = now >= new Date(cfg.override_open_at) && now <= new Date(cfg.override_close_at);
+    return buildWindowStatus(isOpen, new Date(cfg.override_open_at), new Date(cfg.override_close_at), 'admin_range');
+  }
+
+  return computed;
+}
+
+async function promoteQueueEntryToOrder(queueRow, options = {}) {
+  const finalStatus = options.finalStatus || 'processed';
+  const changedBy = options.changedBy || { id: queueRow.user_id, role: 'system' };
+
+  if (!queueRow || queueRow.status !== 'queued') {
+    return null;
+  }
+
+  const user = await UserModel.findById(queueRow.user_id);
+  const deliveryDetails = await UserModel.findDeliveryDetails(queueRow.user_id);
+
+  const createdOrder = await OrderModel.create({
+    user: queueRow.user_id,
+    measurement: queueRow.measurement_id,
+    orderType: queueRow.order_type || 'special_request',
+    customerName: user?.fullName || null,
+    customerEmail: user?.email || null,
+    customerPhone: deliveryDetails?.phone || user?.phone || null,
+    deliveryAddress: deliveryDetails
+      ? {
+          address: deliveryDetails.address || null,
+          phone: deliveryDetails.phone || user?.phone || null,
+          landmark: deliveryDetails.landmark || null,
+          nearestBusStop: deliveryDetails.nearestBusStop || null,
+        }
+      : null,
+    notes: queueRow.notes || queueRow.style_description || null,
+    createdBy: changedBy.id,
+    createdByRole: changedBy.role,
+  });
+
+  await OrderItemModel.create({
+    order: createdOrder.id,
+    category: queueRow.category || 'custom',
+    description: queueRow.style_description || queueRow.style_title,
+    quantity: 1,
+    customizations: {
+      queueId: queueRow.id,
+      title: queueRow.style_title,
+      imageUrl: queueRow.style_image_url,
+      source: queueRow.source,
+      sourceUrl: queueRow.source_url,
+      payload: queueRow.style_payload || {},
+    },
+    style: {
+      title: queueRow.style_title,
+      image: queueRow.style_image_url,
+    },
+    notes: queueRow.notes || null,
+    itemStatus: 'pending',
+  });
+
+  await dbQuery(
+    `UPDATE style_selection_queue
+       SET status = $2,
+           linked_order_id = $3,
+           escalated_by = CASE WHEN $2='escalated' THEN $4::uuid ELSE escalated_by END,
+           updated_at = NOW()
+     WHERE id = $1`,
+    [queueRow.id, finalStatus, createdOrder.id, changedBy.id || null]
+  );
+
+  return createdOrder;
+}
+
+async function processQueueIfWindowOpen() {
+  const status = await resolveStylingWindowStatus();
+  if (!status.isOpen) {
+    return 0;
+  }
+
+  const { rows } = await dbQuery(
+    `SELECT *
+       FROM style_selection_queue
+      WHERE status = 'queued'
+      ORDER BY created_at ASC
+      LIMIT 100`
+  );
+
+  let processedCount = 0;
+  for (const row of rows) {
+    try {
+      await promoteQueueEntryToOrder(row, {
+        finalStatus: 'processed',
+        changedBy: { id: row.user_id, role: 'system' },
+      });
+      processedCount += 1;
+    } catch (error) {
+      logger.error('Failed promoting queued style to order', {
+        queueId: row.id,
+        error: error.message,
+      });
+    }
+  }
+
+  return processedCount;
+}
+
 const orderResolvers = {
   Order: {
     userDetails: async (order) => {
@@ -55,6 +272,33 @@ const orderResolvers = {
     canPurchaseAccessories: (order) => order?.canPurchaseAccessories ?? order?.status === ORDER_STATUS.PRODUCTION_IN_PROGRESS,
   },
 
+  QueuedStyleSelection: {
+    userDetails: async (entry) => {
+      if (!entry?.user) {
+        return null;
+      }
+      try {
+        const user = await UserModel.findById(entry.user);
+        return user ? entityToJSON(user) : null;
+      } catch (error) {
+        logger.error('Error resolving queue.userDetails:', error);
+        return null;
+      }
+    },
+    linkedOrder: async (entry) => {
+      if (!entry?.linkedOrderId) {
+        return null;
+      }
+      try {
+        const order = await OrderModel.findById(entry.linkedOrderId);
+        return order ? entityToJSON(order) : null;
+      } catch (error) {
+        logger.error('Error resolving queue.linkedOrder:', error);
+        return null;
+      }
+    },
+  },
+
   Query: {
     order: async (_, { id }, context) => {
       const authUser = requireAuth(context);
@@ -92,8 +336,9 @@ const orderResolvers = {
 
     orders: async (_, { filter = {}, pagination = {} }, context) => {
       requireAdmin(context);
+      await processQueueIfWindowOpen();
       const page = pagination.page || 1;
-      const limit = pagination.limit || 20;
+      const limit = pagination.limit || DEFAULT_PAGE_LIMIT;
       const offset = (page - 1) * limit;
 
       const query = {};
@@ -119,8 +364,9 @@ const orderResolvers = {
 
     myOrders: async (_, { pagination = {} }, context) => {
       const authUser = requireAuth(context);
+      await processQueueIfWindowOpen();
       const page = pagination.page || 1;
-      const limit = pagination.limit || 20;
+      const limit = pagination.limit || DEFAULT_PAGE_LIMIT;
       const offset = (page - 1) * limit;
 
       const result = await OrderModel.find({ user: authUser.id }, { limit, offset });
@@ -134,6 +380,57 @@ const orderResolvers = {
       requireAuth(context);
       const orders = await OrderModel.findByStatus(status);
       return entitiesToJSON(orders);
+    },
+
+    stylingWindowStatus: async (_, __, context) => {
+      requireAuth(context);
+      const status = await resolveStylingWindowStatus();
+      await processQueueIfWindowOpen();
+      return status;
+    },
+
+    stylingWindowConfig: async (_, __, context) => {
+      requireAdmin(context);
+      const { rows } = await dbQuery('SELECT * FROM styling_window_config WHERE id = 1 LIMIT 1');
+      return formatStylingWindowConfig(rows[0]);
+    },
+
+    myStyleQueue: async (_, __, context) => {
+      const authUser = requireAuth(context);
+      await processQueueIfWindowOpen();
+      const { rows } = await dbQuery(
+        `SELECT *
+           FROM style_selection_queue
+          WHERE user_id = $1
+            AND status IN ('queued', 'processed', 'escalated')
+          ORDER BY created_at DESC`,
+        [authUser.id]
+      );
+      return rows.map(formatQueueRow);
+    },
+
+    styleQueue: async (_, { status }, context) => {
+      requireAdmin(context);
+      await processQueueIfWindowOpen();
+
+      if (status) {
+        const { rows } = await dbQuery(
+          `SELECT *
+             FROM style_selection_queue
+            WHERE status = $1
+            ORDER BY created_at DESC`,
+          [status]
+        );
+        return rows.map(formatQueueRow);
+      }
+
+      const { rows } = await dbQuery(
+        `SELECT *
+           FROM style_selection_queue
+          WHERE status IN ('queued', 'processed', 'escalated')
+          ORDER BY created_at DESC`
+      );
+      return rows.map(formatQueueRow);
     },
   },
 
@@ -266,6 +563,190 @@ const orderResolvers = {
       requireAuth(context);
       await OrderItemModel.delete(itemId);
       return { success: true, message: 'Order item removed' };
+    },
+
+    queueStyleSelection: async (_, { input }, context) => {
+      const authUser = requireAuth(context);
+      const windowStatus = await resolveStylingWindowStatus();
+
+      if (windowStatus.isOpen) {
+        const user = await UserModel.findById(authUser.id);
+        const deliveryDetails = await UserModel.findDeliveryDetails(authUser.id);
+
+        const order = await OrderModel.create({
+          user: authUser.id,
+          measurement: input.measurement,
+          orderType: input.orderType || 'special_request',
+          customerName: user?.fullName || null,
+          customerEmail: user?.email || null,
+          customerPhone: deliveryDetails?.phone || user?.phone || null,
+          deliveryAddress: deliveryDetails
+            ? {
+                address: deliveryDetails.address || null,
+                phone: deliveryDetails.phone || user?.phone || null,
+                landmark: deliveryDetails.landmark || null,
+                nearestBusStop: deliveryDetails.nearestBusStop || null,
+              }
+            : null,
+          notes: input.notes || input.styleDescription || null,
+          createdBy: authUser.id,
+          createdByRole: authUser.role || authUser.type || 'user',
+        });
+
+        await OrderItemModel.create({
+          order: order.id,
+          category: input.category || 'custom',
+          description: input.styleDescription || input.styleTitle,
+          style: {
+            title: input.styleTitle,
+            image: input.styleImageUrl,
+          },
+          customizations: {
+            payload: input.stylePayload || {},
+            source: input.source,
+            sourceUrl: input.sourceUrl,
+          },
+          notes: input.notes || null,
+          quantity: 1,
+          itemStatus: 'pending',
+        });
+
+        const { rows } = await dbQuery(
+          `INSERT INTO style_selection_queue
+            (user_id, measurement_id, order_type, category, style_title, style_description,
+             style_image_url, style_payload, source, source_url, notes, status, linked_order_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'processed',$12)
+           RETURNING *`,
+          [
+            authUser.id,
+            input.measurement || null,
+            input.orderType || 'special_request',
+            input.category || null,
+            input.styleTitle,
+            input.styleDescription || null,
+            input.styleImageUrl || null,
+            input.stylePayload || {},
+            input.source || null,
+            input.sourceUrl || null,
+            input.notes || null,
+            order.id,
+          ]
+        );
+        return formatQueueRow(rows[0]);
+      }
+
+      const { rows } = await dbQuery(
+        `INSERT INTO style_selection_queue
+          (user_id, measurement_id, order_type, category, style_title, style_description,
+           style_image_url, style_payload, source, source_url, notes, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued')
+         RETURNING *`,
+        [
+          authUser.id,
+          input.measurement || null,
+          input.orderType || 'special_request',
+          input.category || null,
+          input.styleTitle,
+          input.styleDescription || null,
+          input.styleImageUrl || null,
+          input.stylePayload || {},
+          input.source || null,
+          input.sourceUrl || null,
+          input.notes || null,
+        ]
+      );
+
+      return formatQueueRow(rows[0]);
+    },
+
+    cancelQueuedStyle: async (_, { id, reason }, context) => {
+      const authUser = requireAuth(context);
+      const role = authUser.role || authUser.type;
+
+      const { rows: foundRows } = await dbQuery('SELECT * FROM style_selection_queue WHERE id = $1 LIMIT 1', [id]);
+      const row = foundRows[0];
+      if (!row) {
+        throw new GraphQLError('Queue item not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      if (row.status !== 'queued') {
+        throw new GraphQLError('Only queued styles can be cancelled', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+
+      if (role !== 'admin' && row.user_id !== authUser.id) {
+        throw new GraphQLError('You do not have access to this queue item', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+
+      const { rows } = await dbQuery(
+        `UPDATE style_selection_queue
+            SET status = 'cancelled',
+                cancel_reason = $2,
+                cancelled_by = $3,
+                updated_at = NOW()
+          WHERE id = $1
+          RETURNING *`,
+        [id, reason || null, authUser.id]
+      );
+
+      return formatQueueRow(rows[0]);
+    },
+
+    escalateQueuedStyleToOrder: async (_, { id }, context) => {
+      const admin = requireAdmin(context);
+      const { rows } = await dbQuery('SELECT * FROM style_selection_queue WHERE id = $1 LIMIT 1', [id]);
+      const row = rows[0];
+
+      if (!row) {
+        throw new GraphQLError('Queue item not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+
+      if (row.status !== 'queued') {
+        throw new GraphQLError('Only queued styles can be escalated', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+
+      await promoteQueueEntryToOrder(row, {
+        finalStatus: 'escalated',
+        changedBy: { id: admin.id, role: 'admin' },
+      });
+
+      const { rows: updatedRows } = await dbQuery('SELECT * FROM style_selection_queue WHERE id = $1 LIMIT 1', [id]);
+      return formatQueueRow(updatedRows[0]);
+    },
+
+    updateStylingWindowConfig: async (_, { input }, context) => {
+      const admin = requireAdmin(context);
+      const { rows } = await dbQuery(
+        `UPDATE styling_window_config
+            SET override_enabled = $1,
+                force_is_open = $2,
+                override_open_at = $3,
+                override_close_at = $4,
+                notes = $5,
+                updated_by = $6,
+                updated_at = NOW()
+          WHERE id = 1
+          RETURNING *`,
+        [
+          input.overrideEnabled,
+          input.forceIsOpen !== undefined ? input.forceIsOpen : null,
+          input.overrideOpenAt || null,
+          input.overrideCloseAt || null,
+          input.notes || null,
+          admin.id,
+        ]
+      );
+
+      return formatStylingWindowConfig(rows[0]);
     },
   },
 };

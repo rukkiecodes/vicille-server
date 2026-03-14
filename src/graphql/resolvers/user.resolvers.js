@@ -177,6 +177,59 @@ const userResolvers = {
       return entityToJSON(user);
     },
 
+    saveStudioPhotos: async (_, { photos }, context) => {
+      const authUser = requireAuth(context);
+      if (authUser.type !== 'user') {
+        throw new GraphQLError('This mutation is for users only', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+
+      const MAX_PHOTOS = 4;
+      const validPhotos = photos.slice(0, MAX_PHOTOS);
+      const savedPhotos = [];
+
+      for (const photo of validPhotos) {
+        if (photo.base64) {
+          const dataURI = `data:${photo.mimeType || 'image/jpeg'};base64,${photo.base64}`;
+          let uploadResult;
+          try {
+            uploadResult = await cloudinary.uploader.upload(dataURI, {
+              ...uploadPresets.studioPhoto,
+              public_id: `studio_${authUser.id}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+              overwrite: false,
+            });
+          } catch (err) {
+            logger.error('Cloudinary studio photo upload error:', err);
+            throw new GraphQLError('Failed to upload image. Please try again.', {
+              extensions: { code: 'UPLOAD_FAILED' },
+            });
+          }
+          savedPhotos.push({
+            url: uploadResult.secure_url,
+            publicId: uploadResult.public_id,
+            mimeType: photo.mimeType || 'image/jpeg',
+          });
+        } else if (photo.url) {
+          savedPhotos.push({
+            url: photo.url,
+            publicId: photo.publicId || null,
+            mimeType: photo.mimeType || 'image/jpeg',
+          });
+        }
+      }
+
+      const user = await UserModel.findByIdAndUpdate(authUser.id, {
+        studioPhotos: savedPhotos,
+      });
+
+      if (!user) {
+        throw new GraphQLError('User not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+
+      return entityToJSON(user);
+    },
+
     deactivateAccount: async (_, __, context) => {
       const authUser = requireAuth(context);
       await UserModel.findByIdAndDelete(authUser.id);
@@ -186,6 +239,7 @@ const userResolvers = {
 
   User: {
     profilePhoto: (parent) => parent.profilePhoto ? { url: parent.profilePhoto } : null,
+    studioPhotos: (parent) => Array.isArray(parent.studioPhotos) ? parent.studioPhotos : [],
     deliveryDetails: (parent) => UserModel.findDeliveryDetails(parent.id),
     preferences: (parent) => UserModel.findPreferences(parent.id),
   },

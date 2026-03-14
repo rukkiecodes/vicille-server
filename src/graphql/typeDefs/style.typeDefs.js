@@ -35,6 +35,37 @@ const styleTypeDefs = gql`
     total: Int!
   }
 
+  type TryOnImage {
+    imageUrl: String!
+    publicId: String
+    width: Int
+    height: Int
+    format: String
+    bytes: Int
+    model: String
+  }
+
+  type StyleTryOnResult {
+    results: [TryOnImage!]!
+    total: Int!
+    styleTitle: String!
+  }
+
+  input UserImageInput {
+    data: String!
+    mimeType: String!
+  }
+
+  input StyleTryOnInput {
+    styleTitle: String!
+    styleDescription: String
+    styleImageUrl: String
+    userImages: [UserImageInput!]
+    userImageUrls: [String!]
+    folder: String
+    tags: [String]
+  }
+
   extend type Query {
     style(id: ID!): Style
     styleBySlug(slug: String!): Style
@@ -48,6 +79,7 @@ const styleTypeDefs = gql`
     updateStyle(id: ID!, input: UpdateStyleInput!): Style
     deleteStyle(id: ID!): Boolean!
     saveSearchResultAsStyle(input: SaveStyleFromSearchInput!): Style!
+    generateStyleTryOn(input: StyleTryOnInput!): StyleTryOnResult!
   }
 
   input CreateStyleInput {

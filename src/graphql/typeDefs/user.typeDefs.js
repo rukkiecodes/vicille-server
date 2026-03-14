@@ -12,6 +12,7 @@ const userTypeDefs = gql`
     height: Height
     preferences: UserPreferences
     profilePhoto: ProfilePhoto
+    studioPhotos: [StudioPhoto]
     deliveryDetails: DeliveryDetails
     paymentMethods: [PaymentMethod!]
     referralBalance: Float
@@ -60,6 +61,12 @@ const userTypeDefs = gql`
     url: String!
   }
 
+  type StudioPhoto {
+    url: String!
+    publicId: String
+    mimeType: String
+  }
+
   input ProfilePhotoInput {
     url: String!
   }
@@ -92,6 +99,7 @@ const userTypeDefs = gql`
     updatePreferences(input: UserPreferencesInput!): User!
     completeOnboardingStep(step: Int!, data: JSON): User!
     uploadProfilePhoto(base64: String!, mimeType: String): User!
+    saveStudioPhotos(photos: [StudioPhotoInput!]!): User!
     deactivateAccount: DeleteResult!
   }
 
@@ -129,6 +137,13 @@ const userTypeDefs = gql`
     colors: [String!]
     fabrics: [String!]
     lifestyle: String
+  }
+
+  input StudioPhotoInput {
+    url: String
+    publicId: String
+    base64: String
+    mimeType: String
   }
 `;
 

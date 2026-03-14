@@ -14,6 +14,8 @@
     "migrate:013": "node migrations/run-013.js",
     "migrate:014": "node migrations/run-014.js",
     "migrate:015": "node migrations/run-015.js",
+    "migrate:016": "node migrations/run-016.js",
+    "migrate:017": "node migrations/run-017.js",
     "test": "jest --coverage",
     "test:unit": "jest --testPathPattern=tests/unit",
     "test:integration": "jest --testPathPattern=tests/integration",

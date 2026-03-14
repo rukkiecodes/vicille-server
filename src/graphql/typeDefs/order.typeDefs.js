@@ -86,6 +86,46 @@ const orderTypeDefs = gql`
     pageInfo: PageInfo!
   }
 
+  type StylingWindowStatus {
+    isOpen: Boolean!
+    opensAt: DateTime!
+    closesAt: DateTime!
+    source: String!
+    countdownSeconds: Int!
+  }
+
+  type StylingWindowConfig {
+    overrideEnabled: Boolean!
+    forceIsOpen: Boolean
+    overrideOpenAt: DateTime
+    overrideCloseAt: DateTime
+    notes: String
+    updatedBy: String
+    updatedAt: DateTime
+  }
+
+  type QueuedStyleSelection {
+    id: ID!
+    user: ID!
+    measurement: ID
+    orderType: String!
+    category: String
+    styleTitle: String!
+    styleDescription: String
+    styleImageUrl: String
+    stylePayload: JSON
+    source: String
+    sourceUrl: String
+    notes: String
+    status: String!
+    linkedOrderId: ID
+    cancelReason: String
+    createdAt: DateTime!
+    updatedAt: DateTime!
+    userDetails: User
+    linkedOrder: Order
+  }
+
   extend type Query {
     order(id: ID!): Order
     orderByNumber(orderNumber: String!): Order
@@ -95,6 +135,10 @@ const orderTypeDefs = gql`
     ): OrderConnection!
     myOrders(pagination: PaginationInput): OrderConnection!
     ordersByStatus(status: String!): [Order!]!
+    stylingWindowStatus: StylingWindowStatus!
+    stylingWindowConfig: StylingWindowConfig!
+    myStyleQueue: [QueuedStyleSelection!]!
+    styleQueue(status: String): [QueuedStyleSelection!]!
   }
 
   extend type Mutation {
@@ -105,6 +149,10 @@ const orderTypeDefs = gql`
     updateOrderDelivery(id: ID!, input: OrderDeliveryInput!): Order!
     addOrderItem(orderId: ID!, input: OrderItemInput!): OrderItem!
     removeOrderItem(orderId: ID!, itemId: ID!): DeleteResult!
+    queueStyleSelection(input: QueueStyleSelectionInput!): QueuedStyleSelection!
+    cancelQueuedStyle(id: ID!, reason: String): QueuedStyleSelection!
+    escalateQueuedStyleToOrder(id: ID!): QueuedStyleSelection!
+    updateStylingWindowConfig(input: UpdateStylingWindowConfigInput!): StylingWindowConfig!
   }
 
   input OrderFilterInput {
@@ -153,6 +201,27 @@ const orderTypeDefs = gql`
     customizations: JSON
     quantity: Int
     unitPrice: Float
+    notes: String
+  }
+
+  input QueueStyleSelectionInput {
+    measurement: ID
+    orderType: String
+    category: String
+    styleTitle: String!
+    styleDescription: String
+    styleImageUrl: String
+    stylePayload: JSON
+    source: String
+    sourceUrl: String
+    notes: String
+  }
+
+  input UpdateStylingWindowConfigInput {
+    overrideEnabled: Boolean!
+    forceIsOpen: Boolean
+    overrideOpenAt: DateTime
+    overrideCloseAt: DateTime
     notes: String
   }
 `;

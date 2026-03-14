@@ -28,6 +28,11 @@ export const uploadPresets = {
     allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
     transformation: [{ width: 1500, height: 1500, crop: 'limit' }],
   },
+  studioPhoto: {
+    folder: 'vicelle/studio-photos',
+    allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],
+    transformation: [{ width: 1024, crop: 'limit', quality: 'auto:good' }],
+  },
   collectionImage: {
     folder: 'vicelle/collections',
     allowed_formats: ['jpg', 'jpeg', 'png', 'webp'],

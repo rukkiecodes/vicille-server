@@ -3,6 +3,9 @@ import StyleModel from '../../modules/styles/style.model.js';
 import StyleSearchService from '../../services/styleSearch.service.js';
 import logger from '../../core/logger/index.js';
 
+const IMAGE_GENERATION_SERVICE_URL =
+  process.env.IMAGE_GENERATION_SERVICE_URL || 'http://localhost:8090';
+
 const styleResolvers = {
   Query: {
     style: async (_, { id }) => {
@@ -64,6 +67,40 @@ const styleResolvers = {
         }],
         createdBy: context.user?.id ?? null,
       });
+    },
+
+    generateStyleTryOn: async (_, { input }) => {
+      const url = `${IMAGE_GENERATION_SERVICE_URL}/images/try-on`;
+
+      let response;
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input),
+          signal: AbortSignal.timeout(180_000), // 3 min for multi-image AI generation
+        });
+      } catch (err) {
+        logger.error('generateStyleTryOn fetch error:', err);
+        throw new GraphQLError('Image generation service is unreachable', {
+          extensions: { code: 'BAD_GATEWAY' },
+        });
+      }
+
+      if (!response.ok) {
+        const errBody = await response.json().catch(() => ({}));
+        logger.error('generateStyleTryOn service error:', errBody);
+        throw new GraphQLError(errBody.error || 'Image generation failed', {
+          extensions: { code: 'BAD_GATEWAY', status: response.status },
+        });
+      }
+
+      const data = await response.json();
+      return {
+        results: data.results ?? [],
+        total: data.total ?? 0,
+        styleTitle: data.styleTitle ?? input.styleTitle,
+      };
     },
   },
 
