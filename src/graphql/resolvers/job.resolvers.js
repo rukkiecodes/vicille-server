@@ -384,6 +384,7 @@ const jobResolvers = {
         completionProof: proof,
         status: 'ready_for_qc',
         statusHistory,
+        revisionNotes: null,
       });
 
       return entityToJSON(updated);
