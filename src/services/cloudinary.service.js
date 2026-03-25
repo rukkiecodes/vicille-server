@@ -81,6 +81,33 @@ export const uploadPortfolioItem = async (fileStream, tailorId) => {
 };
 
 /**
+ * Upload job proof photo (base64 data URI)
+ */
+export const uploadJobProofPhoto = async (base64DataUri, jobId, index) => {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload(
+      base64DataUri,
+      {
+        folder: 'vicelle/job-proofs',
+        public_id: `job-${jobId}-proof-${index}-${Date.now()}`,
+        transformation: [
+          { width: 1500, height: 1500, crop: 'limit' },
+          { quality: 'auto' },
+        ],
+      },
+      (error, result) => {
+        if (error) {
+          logger.error('Cloudinary job proof upload error:', error);
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      }
+    );
+  });
+};
+
+/**
  * Delete file from Cloudinary
  */
 export const deleteFromCloudinary = async (publicId) => {
@@ -124,6 +151,7 @@ export default {
   uploadProfilePicture,
   uploadOrderPhotos,
   uploadPortfolioItem,
+  uploadJobProofPhoto,
   deleteFromCloudinary,
   generateSecureUrl,
   getFileInfo,

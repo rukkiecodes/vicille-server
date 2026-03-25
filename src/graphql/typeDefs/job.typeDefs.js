@@ -5,10 +5,10 @@ const jobTypeDefs = gql`
     id: ID!
     jobNumber: String!
     clientTag: String
-    order: ID!
+    order: ID
     orderItems: JSON
-    user: ID!
-    tailor: ID!
+    user: ID
+    tailor: ID
     assignedBy: String
     assignmentType: String
     measurements: JSON
@@ -23,6 +23,9 @@ const jobTypeDefs = gql`
     status: String!
     statusHistory: [StatusHistoryEntry!]
     completionProof: JSON
+    proofPhotos: [String]
+    proofNotes: String
+    revisionNotes: String
     reassignments: JSON
     priority: String
     isOverdue: Boolean
@@ -36,6 +39,22 @@ const jobTypeDefs = gql`
     orderDetails: Order
     tailorDetails: Tailor
     userDetails: User
+    clientInfo: JobClientInfo
+  }
+
+  type JobClientInfo {
+    clientName: String
+    clientEmail: String
+    clientPhone: String
+    clientPhotoUrl: String
+    measurements: JSON
+    deliveryAddress: String
+    landmark: String
+    nearestBusStop: String
+    styleImageUrl: String
+    styleTitle: String
+    styleDescription: String
+    styleCategory: String
   }
 
   type JobConnection {
@@ -56,10 +75,13 @@ const jobTypeDefs = gql`
   extend type Mutation {
     createJob(input: CreateJobInput!): Job!
     assignJob(id: ID!, tailorId: ID!): Job!
+    acceptJob(id: ID!): Job!
+    declineJob(id: ID!, reason: String): Job!
     startJob(id: ID!): Job!
     completeJob(id: ID!, proof: JSON): Job!
     reassignJob(id: ID!, newTailorId: ID!, reason: String!): Job!
     updateJobStatus(id: ID!, status: String!, notes: String): Job!
+    submitJobProof(id: ID!, photos: [ProofPhotoInput!]!, notes: String): Job!
   }
 
   input JobFilterInput {
@@ -69,6 +91,11 @@ const jobTypeDefs = gql`
     order: ID
     priority: String
     isOverdue: Boolean
+  }
+
+  input ProofPhotoInput {
+    base64: String!
+    mimeType: String
   }
 
   input CreateJobInput {

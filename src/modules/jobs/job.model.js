@@ -20,6 +20,8 @@ function format(row) {
     assignmentType:       row.assignment_type,
     measurements:         row.measurements,
     stylistInstructions:  row.stylist_instructions,
+    notes:                row.notes || null,
+    priority:             row.priority || null,
     materialsRequired:    row.materials_required || [],
     materialsIssued:      row.materials_issued,
     materialsReceivedAt:  row.materials_received_at,
@@ -39,6 +41,7 @@ function format(row) {
     flagReason:           row.flag_reason,
     flaggedBy:            row.flagged_by,
     resolvedAt:           row.resolved_at,
+    revisionNotes:        row.revision_notes || null,
     createdAt:            row.created_at,
     updatedAt:            row.updated_at,
   };
@@ -93,9 +96,9 @@ const JobModel = {
         data.tailor || data.tailorId || null,
         data.assignedBy || null,
         data.assignmentType || 'manual',
-        data.measurements || null,
+        data.measurements ? JSON.stringify(data.measurements) : null,
         data.stylistInstructions || null,
-        data.materialsRequired || [],
+        JSON.stringify(data.materialsRequired || []),
         data.materialsIssued || false,
         data.materialsReceivedAt || null,
         data.materialsReceivedBy || null,
@@ -103,13 +106,13 @@ const JobModel = {
         data.startedAt || null,
         data.completedAt || null,
         data.status || JOB_STATUS.ASSIGNED,
-        initialStatusHistory,
-        data.completionProof || null,
+        JSON.stringify(initialStatusHistory),
+        data.completionProof ? JSON.stringify(data.completionProof) : null,
         data.qcReview || data.qcReviewId || null,
         data.commission || 0,
         data.payout || data.payoutId || null,
         data.isPaid || false,
-        data.reassignments || [],
+        JSON.stringify(data.reassignments || []),
         data.isFlagged || false,
         data.flagReason || null,
         data.flaggedBy || null,
@@ -162,12 +165,25 @@ const JobModel = {
       flagReason:          'flag_reason',
       flaggedBy:           'flagged_by',
       resolvedAt:          'resolved_at',
+      revisionNotes:       'revision_notes',
     };
+    // JSONB columns must be serialised to a JSON string so the pg driver
+    // doesn't accidentally format arrays/objects as Postgres array literals.
+    const jsonbCols = new Set([
+      'status_history', 'measurements', 'materials_required',
+      'reassignments', 'completion_proof',
+    ]);
     const fields = [];
     const values = [];
     let i = 1;
     for (const [jsKey, dbCol] of Object.entries(colMap)) {
-      if (jsKey in updates) { fields.push(`${dbCol}=$${i++}`); values.push(updates[jsKey]); }
+      if (jsKey in updates) {
+        fields.push(`${dbCol}=$${i++}`);
+        const val = updates[jsKey];
+        values.push(jsonbCols.has(dbCol) && val !== null && val !== undefined
+          ? JSON.stringify(val)
+          : val);
+      }
     }
     if (!fields.length) return this.findById(id);
     values.push(id);

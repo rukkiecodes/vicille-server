@@ -1,13 +1,25 @@
 import { GraphQLError } from 'graphql';
+import { v2 as cloudinary } from 'cloudinary';
 import JobModel from '../../modules/jobs/job.model.js';
 import OrderModel from '../../modules/orders/order.model.js';
 import TailorModel from '../../modules/tailors/tailor.model.js';
 import UserModel from '../../modules/users/user.model.js';
+import MeasurementModel from '../../modules/measurements/measurement.model.js';
+import { query as dbQuery } from '../../infrastructure/database/postgres.js';
 import { requireAuth, requireAdmin, requireTailor, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
+import emailService from '../../services/email.service.js';
+import { cloudinaryConfig } from '../../config/cloudinary.js';
 import logger from '../../core/logger/index.js';
+
+cloudinary.config(cloudinaryConfig);
+
+const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'hello@vicelleclothing.com';
 
 const jobResolvers = {
   Job: {
+    proofPhotos: (job) => job.completionProof?.photos ?? null,
+    proofNotes:  (job) => job.completionProof?.notes  ?? null,
+
     orderDetails: async (job) => {
       if (!job.order) {
         return null;
@@ -41,6 +53,68 @@ const jobResolvers = {
         return user ? entityToJSON(user) : null;
       } catch (error) {
         logger.error('Error resolving job.userDetails:', error);
+        return null;
+      }
+    },
+
+    clientInfo: async (job) => {
+      try {
+        const [user, delivery] = await Promise.all([
+          job.user ? UserModel.findById(job.user) : null,
+          job.user ? UserModel.findDeliveryDetails(job.user) : null,
+        ]);
+
+        // Prefer the measurement linked to the order (snapshot at order time)
+        let measurement = null;
+        if (job.order) {
+          const { rows: orderRows } = await dbQuery(
+            'SELECT measurement_id FROM orders WHERE id=$1 LIMIT 1',
+            [job.order]
+          );
+          const measurementId = orderRows[0]?.measurement_id;
+          if (measurementId) {
+            measurement = await MeasurementModel.findById(measurementId);
+          }
+        }
+        // Fall back to current active measurement
+        if (!measurement && job.user) {
+          measurement = await MeasurementModel.getActiveForUser(job.user);
+        }
+
+        let styleImageUrl = null;
+        let styleTitle = null;
+        let styleDescription = null;
+        let styleCategory = null;
+        if (job.order) {
+          const { rows } = await dbQuery(
+            `SELECT style_image_url, style_title, style_description, category
+             FROM style_selection_queue WHERE linked_order_id=$1 LIMIT 1`,
+            [job.order]
+          );
+          if (rows[0]) {
+            styleImageUrl    = rows[0].style_image_url   || null;
+            styleTitle       = rows[0].style_title       || null;
+            styleDescription = rows[0].style_description || null;
+            styleCategory    = rows[0].category          || null;
+          }
+        }
+
+        return {
+          clientName:       user?.fullName    || null,
+          clientEmail:      user?.email       || null,
+          clientPhone:      delivery?.phone   || user?.phone || null,
+          clientPhotoUrl:   user?.profilePhoto || null,
+          measurements:     measurement?.measurements || null,
+          deliveryAddress:  delivery?.address || null,
+          landmark:         delivery?.landmark || null,
+          nearestBusStop:   delivery?.nearestBusStop || null,
+          styleImageUrl,
+          styleTitle,
+          styleDescription,
+          styleCategory,
+        };
+      } catch (error) {
+        logger.error('Error resolving job.clientInfo:', error);
         return null;
       }
     },
@@ -84,8 +158,9 @@ const jobResolvers = {
       const authUser = requireTailor(context);
       const page = pagination.page || 1;
       const limit = pagination.limit || 20;
+      const offset = (page - 1) * limit;
 
-      const jobs = await JobModel.findByTailor(authUser.id);
+      const jobs = await JobModel.find({ tailor: authUser.id }, { limit, offset });
       const total = await JobModel.countDocuments({ tailor: authUser.id });
 
       return buildPaginatedResponse(entitiesToJSON(jobs), total, page, limit);
@@ -121,6 +196,67 @@ const jobResolvers = {
         });
       }
       return entityToJSON(job);
+    },
+
+    acceptJob: async (_, { id }, context) => {
+      const authUser = requireTailor(context);
+      const job = await JobModel.findById(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (job.tailor !== authUser.id) {
+        throw new GraphQLError('This job is not assigned to you', { extensions: { code: 'FORBIDDEN' } });
+      }
+
+      const updated = await JobModel.updateStatus(id, 'in_progress', 'Job accepted by tailor');
+
+      // Sync order status to production_in_progress
+      if (job.order) {
+        try {
+          await OrderModel.findByIdAndUpdate(job.order, { status: 'production_in_progress' });
+        } catch (e) {
+          logger.warn('Failed to sync order status on job accept:', e);
+        }
+      }
+
+      // Notify admin (fire-and-forget)
+      const tailor = await TailorModel.findById(authUser.id);
+      const order  = job.order ? await OrderModel.findById(job.order) : null;
+      emailService.sendAdminJobResponseEmail(
+        ADMIN_EMAIL,
+        tailor?.fullName || 'Tailor',
+        order?.orderNumber || job.order || id,
+        true,
+        null,
+      ).catch(() => {});
+
+      return entityToJSON(updated);
+    },
+
+    declineJob: async (_, { id, reason }, context) => {
+      const authUser = requireTailor(context);
+      const job = await JobModel.findById(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (job.tailor !== authUser.id) {
+        throw new GraphQLError('This job is not assigned to you', { extensions: { code: 'FORBIDDEN' } });
+      }
+
+      const updated = await JobModel.updateStatus(id, 'declined', reason || 'Declined by tailor');
+
+      // Notify admin (fire-and-forget)
+      const tailor = await TailorModel.findById(authUser.id);
+      const order  = job.order ? await OrderModel.findById(job.order) : null;
+      emailService.sendAdminJobResponseEmail(
+        ADMIN_EMAIL,
+        tailor?.fullName || 'Tailor',
+        order?.orderNumber || job.order || id,
+        false,
+        reason || null,
+      ).catch(() => {});
+
+      return entityToJSON(updated);
     },
 
     startJob: async (_, { id }, context) => {
@@ -192,6 +328,64 @@ const jobResolvers = {
           extensions: { code: 'NOT_FOUND' },
         });
       }
+      return entityToJSON(updated);
+    },
+
+    submitJobProof: async (_, { id, photos, notes }, context) => {
+      const authUser = requireTailor(context);
+      const job = await JobModel.findById(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (job.tailor !== authUser.id) {
+        throw new GraphQLError('This job is not assigned to you', { extensions: { code: 'FORBIDDEN' } });
+      }
+      if (job.status !== 'in_progress') {
+        throw new GraphQLError('Job must be in progress to submit proof', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      // Upload each photo to Cloudinary
+      const uploadedUrls = await Promise.all(
+        photos.map((p, i) => {
+          const dataUri = `data:${p.mimeType || 'image/jpeg'};base64,${p.base64}`;
+          return new Promise((resolve, reject) => {
+            cloudinary.uploader.upload(
+              dataUri,
+              {
+                folder: 'vicelle/job-proofs',
+                public_id: `job-${id}-proof-${i}-${Date.now()}`,
+                transformation: [
+                  { width: 1500, height: 1500, crop: 'limit' },
+                  { quality: 'auto' },
+                ],
+              },
+              (err, result) => {
+                if (err) reject(err);
+                else resolve(result.secure_url);
+              }
+            );
+          });
+        })
+      );
+
+      const proof = {
+        photos: uploadedUrls,
+        notes: notes || null,
+        submittedAt: new Date().toISOString(),
+      };
+
+      const statusHistory = [...(job.statusHistory || []), {
+        status: 'ready_for_qc',
+        changedAt: new Date().toISOString(),
+        notes: 'Proof submitted by tailor',
+      }];
+
+      const updated = await JobModel.findByIdAndUpdate(id, {
+        completionProof: proof,
+        status: 'ready_for_qc',
+        statusHistory,
+      });
+
       return entityToJSON(updated);
     },
   },
