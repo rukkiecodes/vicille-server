@@ -32,9 +32,9 @@ const config = {
     user: process.env.SUPERBASE_POOL_USER,
     password: process.env.SUPERBASE_DB_PASSWORD,
     ssl: { rejectUnauthorized: false }, // required for Supabase
-    max: 10,          // max pool connections
-    idleTimeoutMillis: 30000,
-    connectionTimeoutMillis: 10000,
+    max: parseInt(process.env.DB_POOL_MAX, 10) || 3,
+    idleTimeoutMillis: parseInt(process.env.DB_POOL_IDLE_TIMEOUT_MS, 10) || 10000,
+    connectionTimeoutMillis: parseInt(process.env.DB_POOL_CONNECTION_TIMEOUT_MS, 10) || 5000,
   },
 
   // Redis (caching only)

@@ -219,8 +219,10 @@ const userResolvers = {
         }
       }
 
+      const safeStudioPhotos = JSON.parse(JSON.stringify(savedPhotos));
+
       const user = await UserModel.findByIdAndUpdate(authUser.id, {
-        studioPhotos: savedPhotos,
+        studioPhotos: safeStudioPhotos,
       });
 
       if (!user) {

@@ -7,7 +7,7 @@ import {
   generateRefreshToken,
   verifyRefreshToken,
 } from '../../middlewares/auth.middleware.js';
-import { generateSessionId } from '../../core/utils/randomCode.js';
+import { generateActivationCode, generateSessionId } from '../../core/utils/randomCode.js';
 import { query } from '../../infrastructure/database/postgres.js';
 import emailService from '../../services/email.service.js';
 import logger from '../../core/logger/index.js';
@@ -17,6 +17,57 @@ const RESET_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 const authResolvers = {
   Mutation: {
     // ─── CLIENT AUTH ─────────────────────────────────────────────────────────
+
+    clientSignup: async (_, { input }) => {
+      try {
+        const email = input.email.trim().toLowerCase();
+        const fullName = input.fullName.trim();
+        const phone = input.phone?.trim() || null;
+
+        const existingByEmail = await UserModel.findByEmail(email);
+        if (existingByEmail) {
+          throw new GraphQLError('Email already registered', {
+            extensions: { code: 'CONFLICT' },
+          });
+        }
+
+        if (phone) {
+          const existingByPhone = await UserModel.findByPhone(phone);
+          if (existingByPhone) {
+            throw new GraphQLError('Phone number already registered', {
+              extensions: { code: 'CONFLICT' },
+            });
+          }
+        }
+
+        const activationCode = generateActivationCode();
+
+        await UserModel.create({
+          fullName,
+          email,
+          phone,
+          activationCode,
+          status: 'pending',
+        });
+
+        try {
+          await emailService.sendActivationCodeEmail(email, fullName, activationCode);
+        } catch (emailError) {
+          logger.error('clientSignup email error:', emailError);
+        }
+
+        return {
+          success: true,
+          message: 'Signup successful. Your account is pending admin approval before you can log in.',
+        };
+      } catch (error) {
+        if (error instanceof GraphQLError) throw error;
+        logger.error('clientSignup error:', error);
+        throw new GraphQLError('Signup failed', {
+          extensions: { code: 'INTERNAL_SERVER_ERROR' },
+        });
+      }
+    },
 
     clientLogin: async (_, { passcode }) => {
       try {
@@ -28,14 +79,23 @@ const authResolvers = {
           });
         }
 
+        if (user.status !== 'active') {
+          const message = user.status === 'suspended'
+            ? 'Your account has been suspended. Contact support.'
+            : 'Your account is pending admin approval. Please try again after approval.';
+
+          throw new GraphQLError(message, {
+            extensions: { code: 'FORBIDDEN' },
+          });
+        }
+
         await UserModel.resetFailedAttempts(user);
 
-        // Activate on first login if not already active
-        if (!user.isActivated || user.status !== 'active') {
+        // Mark account as activated on first successful login after admin approval.
+        if (!user.isActivated) {
           await UserModel.findByIdAndUpdate(user.entityId, {
             isActivated: true,
             activatedAt: new Date(),
-            status:      'active',
           });
         }
 
@@ -91,12 +151,19 @@ const authResolvers = {
       try {
         const user = await UserModel.findByEmail(email);
 
-        if (!user || !user.activationCode) {
+        if (!user) {
           return { success: true, message: 'If an account exists, your passcode has been resent.' };
         }
 
+        // Generate a code if the user doesn't have one yet (existing users pre-migration)
+        let code = user.activationCode;
+        if (!code) {
+          code = generateActivationCode();
+          await UserModel.findByIdAndUpdate(user.entityId, { activationCode: code });
+        }
+
         try {
-          await emailService.sendActivationCodeEmail(user.email, user.fullName, user.activationCode);
+          await emailService.sendActivationCodeEmail(user.email, user.fullName, code);
         } catch (emailError) {
           logger.error('clientForgotPasscode email error:', emailError);
         }

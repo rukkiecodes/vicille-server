@@ -10,6 +10,7 @@ import paymentResolvers from './payment.resolvers.js';
 import adminResolvers from './admin.resolvers.js';
 import styleResolvers from './style.resolvers.js';
 import referralResolvers from './referral.resolvers.js';
+import ratingResolvers from './rating.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -24,6 +25,7 @@ const resolvers = [
   adminResolvers,
   styleResolvers,
   referralResolvers,
+  ratingResolvers,
 ];
 
 export default resolvers;

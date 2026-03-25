@@ -12,11 +12,18 @@ const initializeTransporter = () => {
     transporter = nodemailer.createTransport({
       host: config.email.host,
       port: config.email.port,
-      secure: config.email.secure, // true for 465, false for other ports
+      secure: config.email.secure, // true for 465, false for 587 (STARTTLS)
+      requireTLS: !config.email.secure, // enforce TLS upgrade on port 587
       auth: {
         user: config.email.user,
         pass: config.email.password,
       },
+      tls: {
+        rejectUnauthorized: false, // allow self-signed certs in serverless envs
+      },
+      connectionTimeout: 10000,
+      greetingTimeout: 10000,
+      socketTimeout: 15000,
     });
 
     logger.info('Email transporter initialized successfully');
@@ -366,6 +373,64 @@ const sendPaymentConfirmationEmail = async (email, fullName, paymentDetails) => 
 };
 
 /**
+ * Notify admin when a tailor accepts or declines a job
+ */
+const sendAdminJobResponseEmail = async (adminEmail, tailorName, orderNumber, accepted, reason) => {
+  const action = accepted ? 'Accepted' : 'Declined';
+  const color  = accepted ? '#065f46' : '#991b1b';
+  const bg     = accepted ? '#d1fae5' : '#fee2e2';
+  const bodyLine = accepted
+    ? 'The job is now in progress.'
+    : `Please reassign this job to another tailor.${reason ? `<br/><strong>Reason:</strong> ${reason}` : ''}`;
+
+  const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <style>
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111827;margin:0;padding:0;}
+    .container{max-width:600px;margin:0 auto;padding:20px;}
+    .header{background:linear-gradient(135deg,#1f2937 0%,#374151 100%);color:white;padding:28px 20px;border-radius:10px 10px 0 0;text-align:center;}
+    .content{background:#fff;padding:30px;border:1px solid #e5e7eb;border-top:none;border-radius:0 0 10px 10px;}
+    .badge{display:inline-block;background:${bg};color:${color};font-size:12px;font-weight:700;letter-spacing:.06em;padding:5px 14px;border-radius:999px;text-transform:uppercase;}
+    .box{background:#f9fafb;border:1px solid #e5e7eb;border-radius:10px;padding:18px;margin:18px 0;}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1 style="margin:0;font-size:24px;font-weight:500;">Vicelle Admin</h1>
+      <p style="margin:8px 0 0;opacity:.85;">Job Response Notification</p>
+    </div>
+    <div class="content">
+      <p>Hi Admin,</p>
+      <span class="badge">Job ${action}</span>
+      <div class="box">
+        <p style="margin:0 0 6px;"><strong>Tailor:</strong> ${tailorName}</p>
+        <p style="margin:0 0 6px;"><strong>Order:</strong> ${orderNumber}</p>
+        <p style="margin:0;">${bodyLine}</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>`;
+
+  const textContent = `Vicelle Admin — Job ${action}\n\nTailor ${tailorName} has ${action.toLowerCase()} the job for order ${orderNumber}.\n${reason && !accepted ? `Reason: ${reason}\n` : ''}${accepted ? 'The job is now in progress.' : 'Please reassign this job to another tailor.'}`;
+
+  try {
+    const t = getTransporter();
+    await t.sendMail({
+      from: config.email.from,
+      to: adminEmail,
+      subject: `Job ${action} by ${tailorName} — Order ${orderNumber}`,
+      html: htmlContent,
+      text: textContent,
+    });
+  } catch (err) {
+    // never block the tailor action
+  }
+};
+
+/**
  * Send generic email
  */
 const sendEmail = async (email, subject, htmlContent, textContent) => {
@@ -393,6 +458,7 @@ export default {
   sendActivationCodeEmail,
   sendOrderConfirmationEmail,
   sendPaymentConfirmationEmail,
+  sendAdminJobResponseEmail,
   sendEmail,
   getTransporter,
 };

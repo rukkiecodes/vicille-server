@@ -35,7 +35,7 @@ function format(row) {
     height:                  row.height,
     heightSource:            row.height_source,
     gender:                  row.gender,
-    profilePhoto:            row.profile_photo_url,
+    profilePhoto:            row.avatar_url || row.profile_photo_url || null,
     studioPhotos:            Array.isArray(row.studio_photos) ? row.studio_photos : [],
     birthdayPackageEligible: row.birthday_package_eligible,
     failedLoginAttempts:     row.failed_login_attempts,
@@ -65,14 +65,15 @@ const UserModel = {
   async create(data) {
     const { rows } = await query(
       `INSERT INTO users
-         (full_name, email, phone, activation_code, status, created_by_admin_id)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+         (full_name, email, phone, activation_code, status, account_type, created_by_admin_id)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
         data.fullName,
         data.email?.toLowerCase(),
         data.phone || null,
         data.activationCode || null,
         data.status || 'inactive',
+        data.accountType || 'client',
         data.createdByAdminId || null,
       ]
     );
@@ -136,8 +137,16 @@ const UserModel = {
     let i = 1;
     for (const [jsKey, dbCol] of Object.entries(colMap)) {
       if (jsKey in updates) {
-        fields.push(`${dbCol}=$${i++}`);
-        values.push(updates[jsKey]);
+        if (jsKey === 'studioPhotos') {
+          fields.push(`${dbCol}=$${i++}::jsonb`);
+        } else {
+          fields.push(`${dbCol}=$${i++}`);
+        }
+        if (jsKey === 'studioPhotos') {
+          values.push(JSON.stringify(Array.isArray(updates[jsKey]) ? updates[jsKey] : []));
+        } else {
+          values.push(updates[jsKey]);
+        }
       }
     }
     if (!fields.length) return this.findById(id);
