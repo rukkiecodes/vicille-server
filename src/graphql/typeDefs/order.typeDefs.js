@@ -44,6 +44,23 @@ const orderTypeDefs = gql`
     items: [OrderItem!]
     proofPhotos: [String]
     proofNotes: String
+    styleInfo: OrderStyleInfo
+    tailorDetails: OrderTailorInfo
+  }
+
+  type OrderStyleInfo {
+    styleImageUrl: String
+    styleTitle: String
+    styleDescription: String
+    category: String
+  }
+
+  type OrderTailorInfo {
+    id: ID
+    fullName: String
+    phone: String
+    email: String
+    photoUrl: String
   }
 
   type ProductionCycle {

@@ -3,6 +3,7 @@ import OrderModel from '../../modules/orders/order.model.js';
 import OrderItemModel from '../../modules/orders/orderItem.model.js';
 import UserModel from '../../modules/users/user.model.js';
 import JobModel from '../../modules/jobs/job.model.js';
+import TailorModel from '../../modules/tailors/tailor.model.js';
 import { requireAuth, requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
 import { ORDER_STATUS } from '../../core/constants/orderStatus.js';
 import { query as dbQuery } from '../../infrastructure/database/postgres.js';
@@ -285,6 +286,43 @@ const orderResolvers = {
         const jobs = await JobModel.findByOrder(order.id);
         const job = jobs?.[0];
         return job?.completionProof?.notes ?? null;
+      } catch {
+        return null;
+      }
+    },
+    styleInfo: async (order) => {
+      try {
+        const { rows } = await dbQuery(
+          `SELECT style_image_url, style_title, style_description, category
+           FROM style_selection_queue WHERE linked_order_id=$1 LIMIT 1`,
+          [order.id]
+        );
+        if (!rows[0]) return null;
+        return {
+          styleImageUrl:    rows[0].style_image_url   || null,
+          styleTitle:       rows[0].style_title       || null,
+          styleDescription: rows[0].style_description || null,
+          category:         rows[0].category          || null,
+        };
+      } catch {
+        return null;
+      }
+    },
+    tailorDetails: async (order) => {
+      try {
+        const jobs = await JobModel.findByOrder(order.id);
+        const job = jobs?.[0];
+        if (!job?.tailor) return null;
+        const tailor = await TailorModel.findById(job.tailor);
+        if (!tailor) return null;
+        const t = entityToJSON(tailor);
+        return {
+          id:       t.id,
+          fullName: t.fullName,
+          phone:    t.phone || null,
+          email:    t.email || null,
+          photoUrl: t.profilePhoto?.url || t.profilePhoto || null,
+        };
       } catch {
         return null;
       }
