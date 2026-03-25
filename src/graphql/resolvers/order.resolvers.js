@@ -2,6 +2,7 @@ import { GraphQLError } from 'graphql';
 import OrderModel from '../../modules/orders/order.model.js';
 import OrderItemModel from '../../modules/orders/orderItem.model.js';
 import UserModel from '../../modules/users/user.model.js';
+import JobModel from '../../modules/jobs/job.model.js';
 import { requireAuth, requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
 import { ORDER_STATUS } from '../../core/constants/orderStatus.js';
 import { query as dbQuery } from '../../infrastructure/database/postgres.js';
@@ -270,6 +271,24 @@ const orderResolvers = {
     isStylingWindowOpen: (order) => order?.isStylingWindowOpen ?? order?.status === ORDER_STATUS.STYLING_IN_PROGRESS,
     canBeCancelled: (order) => order?.canBeCancelled ?? order?.status === ORDER_STATUS.STYLING_IN_PROGRESS,
     canPurchaseAccessories: (order) => order?.canPurchaseAccessories ?? order?.status === ORDER_STATUS.PRODUCTION_IN_PROGRESS,
+    proofPhotos: async (order) => {
+      try {
+        const jobs = await JobModel.findByOrder(order.id);
+        const job = jobs?.[0];
+        return job?.completionProof?.photos ?? null;
+      } catch {
+        return null;
+      }
+    },
+    proofNotes: async (order) => {
+      try {
+        const jobs = await JobModel.findByOrder(order.id);
+        const job = jobs?.[0];
+        return job?.completionProof?.notes ?? null;
+      } catch {
+        return null;
+      }
+    },
   },
 
   QueuedStyleSelection: {
@@ -611,11 +630,12 @@ const orderResolvers = {
           itemStatus: 'pending',
         });
 
+        const styleId = (input.stylePayload?.styleId) || null;
         const { rows } = await dbQuery(
           `INSERT INTO style_selection_queue
             (user_id, measurement_id, order_type, category, style_title, style_description,
-             style_image_url, style_payload, source, source_url, notes, status, linked_order_id)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'processed',$12)
+             style_image_url, style_payload, source, source_url, notes, status, linked_order_id, style_id)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'processed',$12,$13)
            RETURNING *`,
           [
             authUser.id,
@@ -625,21 +645,23 @@ const orderResolvers = {
             input.styleTitle,
             input.styleDescription || null,
             input.styleImageUrl || null,
-            input.stylePayload || {},
+            input.stylePayload ? JSON.stringify(input.stylePayload) : '{}',
             input.source || null,
             input.sourceUrl || null,
             input.notes || null,
             order.id,
+            styleId,
           ]
         );
         return formatQueueRow(rows[0]);
       }
 
+      const styleId = (input.stylePayload?.styleId) || null;
       const { rows } = await dbQuery(
         `INSERT INTO style_selection_queue
           (user_id, measurement_id, order_type, category, style_title, style_description,
-           style_image_url, style_payload, source, source_url, notes, status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued')
+           style_image_url, style_payload, source, source_url, notes, status, style_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,'queued',$12)
          RETURNING *`,
         [
           authUser.id,
@@ -649,10 +671,11 @@ const orderResolvers = {
           input.styleTitle,
           input.styleDescription || null,
           input.styleImageUrl || null,
-          input.stylePayload || {},
+          input.stylePayload ? JSON.stringify(input.stylePayload) : '{}',
           input.source || null,
           input.sourceUrl || null,
           input.notes || null,
+          styleId,
         ]
       );
 

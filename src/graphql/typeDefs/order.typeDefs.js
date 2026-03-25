@@ -42,6 +42,8 @@ const orderTypeDefs = gql`
     # Resolved fields
     userDetails: User
     items: [OrderItem!]
+    proofPhotos: [String]
+    proofNotes: String
   }
 
   type ProductionCycle {
