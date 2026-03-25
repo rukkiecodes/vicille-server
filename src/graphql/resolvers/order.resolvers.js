@@ -290,6 +290,15 @@ const orderResolvers = {
         return null;
       }
     },
+    jobStatus: async (order) => {
+      try {
+        const jobs = await JobModel.findByOrder(order.id);
+        const job = jobs?.[0];
+        return job?.status ?? null;
+      } catch {
+        return null;
+      }
+    },
     styleInfo: async (order) => {
       try {
         const { rows } = await dbQuery(

@@ -44,6 +44,7 @@ const orderTypeDefs = gql`
     items: [OrderItem!]
     proofPhotos: [String]
     proofNotes: String
+    jobStatus: String
     styleInfo: OrderStyleInfo
     tailorDetails: OrderTailorInfo
   }
