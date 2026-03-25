@@ -153,6 +153,17 @@ const OrderModel = {
     return order;
   },
 
+  // Always reads from Postgres and refreshes the Redis cache.
+  // Use this wherever stale cached status would be user-visible.
+  async findByIdFresh(id) {
+    const { rows } = await query('SELECT * FROM orders WHERE id=$1', [id]);
+    const order = format(rows[0] || null);
+    if (order) {
+      await cacheOrder(order);
+    }
+    return order;
+  },
+
   async findByOrderNumber(orderNumber) {
     const { rows } = await query('SELECT * FROM orders WHERE order_number=$1', [orderNumber]);
     return format(rows[0] || null);

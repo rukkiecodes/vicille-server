@@ -359,7 +359,7 @@ const orderResolvers = {
   Query: {
     order: async (_, { id }, context) => {
       const authUser = requireAuth(context);
-      const order = await OrderModel.findById(id);
+      const order = await OrderModel.findByIdFresh(id);
       if (!order) {
         throw new GraphQLError('Order not found', {
           extensions: { code: 'NOT_FOUND' },
