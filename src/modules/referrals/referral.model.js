@@ -122,7 +122,7 @@ const ReferralModel = {
     }
   },
 
-  async rewardInviteForSubscription({ invitedUserId, subscriptionId, rewardAmount, rewardCurrency }) {
+  async rewardInviteForSubscription({ invitedUserId, subscriptionId }) {
     const client = await getClient();
     try {
       await client.query('BEGIN');
@@ -132,6 +132,7 @@ const ReferralModel = {
            FROM referral_invites
           WHERE invited_user_id = $1
             AND status = 'accepted'
+            AND source_type = 'user'
           ORDER BY accepted_at ASC NULLS LAST, created_at ASC
           LIMIT 1
           FOR UPDATE`,
@@ -144,7 +145,16 @@ const ReferralModel = {
         return null;
       }
 
-      const amount = Number(rewardAmount || 0);
+      // Fetch reward amount from the subscription's plan
+      const { rows: planRows } = await client.query(
+        `SELECT sp.referral_reward_ngn
+           FROM user_subscriptions us
+           JOIN subscription_plans sp ON sp.id = us.plan_id
+          WHERE us.id = $1`,
+        [subscriptionId]
+      );
+      const amount = Number(planRows[0]?.referral_reward_ngn || 1000);
+      const currency = 'NGN';
 
       const { rows: updatedInviteRows } = await client.query(
         `UPDATE referral_invites
@@ -155,7 +165,7 @@ const ReferralModel = {
                 subscription_id = $3
           WHERE id = $4
           RETURNING *`,
-        [amount, rewardCurrency || 'NGN', subscriptionId || null, invite.id]
+        [amount, currency, subscriptionId || null, invite.id]
       );
 
       await client.query(
@@ -166,6 +176,19 @@ const ReferralModel = {
         [amount, invite.inviter_user_id]
       );
 
+      await client.query(
+        `INSERT INTO referral_wallet_transactions
+           (user_id, type, amount, currency, description, reference_id)
+         VALUES ($1, 'credit', $2, $3, $4, $5)`,
+        [
+          invite.inviter_user_id,
+          amount,
+          currency,
+          'Referral reward for subscription activation',
+          invite.id,
+        ]
+      );
+
       await client.query('COMMIT');
       return format(updatedInviteRows[0]);
     } catch (error) {
@@ -174,6 +197,25 @@ const ReferralModel = {
     } finally {
       client.release();
     }
+  },
+
+  async getWalletTransactions(userId) {
+    const { rows } = await query(
+      `SELECT * FROM referral_wallet_transactions
+        WHERE user_id = $1
+        ORDER BY created_at DESC`,
+      [userId]
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      userId: r.user_id,
+      type: r.type,
+      amount: Number(r.amount),
+      currency: r.currency,
+      description: r.description,
+      referenceId: r.reference_id,
+      createdAt: r.created_at,
+    }));
   },
 
   async getSummaryByInviter(inviterUserId) {

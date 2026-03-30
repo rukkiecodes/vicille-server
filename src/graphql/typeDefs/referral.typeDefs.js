@@ -27,9 +27,21 @@ const referralTypeDefs = gql`
     pendingRewardAmount: Float!
   }
 
+  type ReferralWalletTransaction {
+    id: ID!
+    userId: ID!
+    type: String!
+    amount: Float!
+    currency: String!
+    description: String
+    referenceId: ID
+    createdAt: DateTime!
+  }
+
   extend type Query {
     myReferralSummary: ReferralSummary!
     myReferralInvites: [ReferralInvite!]!
+    myReferralWalletTransactions: [ReferralWalletTransaction!]!
   }
 
   extend type Mutation {

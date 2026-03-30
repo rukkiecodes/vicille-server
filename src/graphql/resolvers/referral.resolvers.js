@@ -27,6 +27,11 @@ const referralResolvers = {
       const authUser = requireAuth(context);
       return ReferralModel.findByInviter(authUser.id);
     },
+
+    myReferralWalletTransactions: async (_, __, context) => {
+      const authUser = requireAuth(context);
+      return ReferralModel.getWalletTransactions(authUser.id);
+    },
   },
 
   Mutation: {

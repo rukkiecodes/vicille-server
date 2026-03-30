@@ -12,6 +12,7 @@ const subscriptionTypeDefs = gql`
     isActive: Boolean
     displayOrder: Int
     formattedPrice: String
+    referralRewardNgn: Float
     createdAt: DateTime!
     updatedAt: DateTime!
   }

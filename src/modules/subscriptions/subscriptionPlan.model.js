@@ -14,10 +14,11 @@ function format(row) {
     pricing:       row.pricing,
     features:      row.features,
     stylingWindow: row.styling_window || { daysBeforeProduction: 7, reminderDays: [7, 3, 1] },
-    isActive:      row.is_active,
-    displayOrder:  row.display_order,
-    createdAt:     row.created_at,
-    updatedAt:     row.updated_at,
+    isActive:           row.is_active,
+    displayOrder:       row.display_order,
+    referralRewardNgn:  row.referral_reward_ngn != null ? Number(row.referral_reward_ngn) : null,
+    createdAt:          row.created_at,
+    updatedAt:          row.updated_at,
   };
 }
 

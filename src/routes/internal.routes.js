@@ -6,6 +6,8 @@ import { Router } from 'express';
 import SubscriptionModel from '../modules/subscriptions/subscription.model.js';
 import UserModel from '../modules/users/user.model.js';
 import ReferralModel from '../modules/referrals/referral.model.js';
+import AffiliateModel from '../modules/affiliates/affiliate.model.js';
+import { query } from '../infrastructure/database/postgres.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -46,21 +48,59 @@ router.post('/subscription-event', async (req, res) => {
           currentSubscription: subscriptionId,
         });
 
-        const rewardAmount = Number(process.env.REFERRAL_REWARD_AMOUNT || 2000);
-        const rewardCurrency = process.env.REFERRAL_REWARD_CURRENCY || 'NGN';
         const reward = await ReferralModel.rewardInviteForSubscription({
           invitedUserId: userId,
           subscriptionId,
-          rewardAmount,
-          rewardCurrency,
         });
 
         if (reward) {
-          logger.info('[internal] referral reward credited', {
+          logger.info('[internal] user referral reward credited', {
             inviterUserId: reward.inviterUserId,
             invitedUserId: userId,
-            rewardAmount: reward.rewardAmount,
+            rewardAmount:  reward.rewardAmount,
             rewardCurrency: reward.rewardCurrency,
+          });
+        }
+
+        // Credit affiliate if this user was referred via an affiliate link
+        const { rows: affiliateInviteRows } = await query(
+          `SELECT ri.*, sp.referral_reward_ngn
+             FROM referral_invites ri
+             JOIN user_subscriptions us ON us.id = $2
+             JOIN subscription_plans sp ON sp.id = us.plan_id
+            WHERE ri.invited_user_id = $1
+              AND ri.status = 'accepted'
+              AND ri.source_type = 'affiliate'
+            ORDER BY ri.accepted_at ASC NULLS LAST, ri.created_at ASC
+            LIMIT 1`,
+          [userId, subscriptionId]
+        );
+        const affiliateInvite = affiliateInviteRows[0];
+        if (affiliateInvite) {
+          const affiliateReward = Number(affiliateInvite.referral_reward_ngn || 1000);
+
+          await query(
+            `UPDATE referral_invites
+                SET status = 'rewarded',
+                    rewarded_at = NOW(),
+                    reward_amount = $1,
+                    reward_currency = 'NGN',
+                    subscription_id = $2
+              WHERE id = $3`,
+            [affiliateReward, subscriptionId, affiliateInvite.id]
+          );
+
+          await AffiliateModel.rewardForSubscription({
+            affiliateId: affiliateInvite.affiliate_id,
+            amount:      affiliateReward,
+            currency:    'NGN',
+            referenceId: affiliateInvite.id,
+          });
+
+          logger.info('[internal] affiliate referral reward credited', {
+            affiliateId:  affiliateInvite.affiliate_id,
+            invitedUserId: userId,
+            rewardAmount:  affiliateReward,
           });
         }
 
