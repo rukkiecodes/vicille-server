@@ -32,6 +32,11 @@ const referralResolvers = {
       const authUser = requireAuth(context);
       return ReferralModel.getWalletTransactions(authUser.id);
     },
+
+    myReferralCode: async (_, __, context) => {
+      const authUser = requireAuth(context);
+      return ReferralModel.getUserReferralCode(authUser.id);
+    },
   },
 
   Mutation: {
@@ -58,6 +63,12 @@ const referralResolvers = {
       });
 
       return invite;
+    },
+
+    generateMyReferralCode: async (_, __, context) => {
+      const authUser = requireAuth(context);
+      const code = await ReferralModel.generateUserReferralCode(authUser.id);
+      return code;
     },
 
     claimReferralInvite: async (_, { inviteCode }, context) => {

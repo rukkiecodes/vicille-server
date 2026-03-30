@@ -42,11 +42,13 @@ const referralTypeDefs = gql`
     myReferralSummary: ReferralSummary!
     myReferralInvites: [ReferralInvite!]!
     myReferralWalletTransactions: [ReferralWalletTransaction!]!
+    myReferralCode: String
   }
 
   extend type Mutation {
     createReferralInvite(invitedEmail: String!): ReferralInvite!
     claimReferralInvite(inviteCode: String!): ReferralInvite!
+    generateMyReferralCode: String!
   }
 `;
 

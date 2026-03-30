@@ -218,6 +218,37 @@ const ReferralModel = {
     }));
   },
 
+  async generateUserReferralCode(userId) {
+    for (let i = 0; i < 10; i += 1) {
+      const code = randomBytes(4).toString('hex').toUpperCase(); // e.g. "A3F2B1C9"
+      try {
+        const { rows } = await query(
+          `UPDATE users SET referral_code = $1 WHERE id = $2 AND referral_code IS NULL RETURNING referral_code`,
+          [code, userId]
+        );
+        if (rows[0]) return rows[0].referral_code;
+        // Already has one — return it
+        const existing = await query(
+          'SELECT referral_code FROM users WHERE id = $1',
+          [userId]
+        );
+        return existing.rows[0]?.referral_code || null;
+      } catch (error) {
+        if (error?.code !== '23505') throw error;
+        // Collision — retry with new code
+      }
+    }
+    throw new Error('Failed to generate unique referral code');
+  },
+
+  async getUserReferralCode(userId) {
+    const { rows } = await query(
+      'SELECT referral_code FROM users WHERE id = $1',
+      [userId]
+    );
+    return rows[0]?.referral_code ?? null;
+  },
+
   async getSummaryByInviter(inviterUserId) {
     const { rows } = await query(
       `SELECT
