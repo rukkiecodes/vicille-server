@@ -2,6 +2,8 @@ import { GraphQLError } from 'graphql';
 import UserModel from '../../modules/users/user.model.js';
 import TailorModel from '../../modules/tailors/tailor.model.js';
 import AdminModel from '../../modules/admin/admin.model.js';
+import ReferralModel from '../../modules/referrals/referral.model.js';
+import NotificationModel from '../../modules/notifications/notification.model.js';
 import {
   generateAccessToken,
   generateRefreshToken,
@@ -11,6 +13,7 @@ import { generateActivationCode, generateSessionId } from '../../core/utils/rand
 import { query } from '../../infrastructure/database/postgres.js';
 import emailService from '../../services/email.service.js';
 import logger from '../../core/logger/index.js';
+import { NOTIFICATION_TYPE, NOTIFICATION_CHANNEL, NOTIFICATION_STATUS } from '../../core/constants/notificationTypes.js';
 
 const RESET_TOKEN_TTL_MS = 15 * 60 * 1000; // 15 minutes
 
@@ -20,9 +23,10 @@ const authResolvers = {
 
     clientSignup: async (_, { input }) => {
       try {
-        const email = input.email.trim().toLowerCase();
-        const fullName = input.fullName.trim();
-        const phone = input.phone?.trim() || null;
+        const email      = input.email.trim().toLowerCase();
+        const fullName   = input.fullName.trim();
+        const phone      = input.phone?.trim() || null;
+        const referralCode = input.referralCode?.trim().toUpperCase() || null;
 
         const existingByEmail = await UserModel.findByEmail(email);
         if (existingByEmail) {
@@ -54,6 +58,43 @@ const authResolvers = {
           await emailService.sendActivationCodeEmail(email, fullName, activationCode);
         } catch (emailError) {
           logger.error('clientSignup email error:', emailError);
+        }
+
+        // ── Handle referral code (fire-and-forget) ────────────────────────────
+        if (referralCode) {
+          (async () => {
+            try {
+              const result = await ReferralModel.createInviteFromReferralCode({
+                referralCode,
+                invitedEmail: email,
+              });
+
+              if (!result) return; // unknown code or duplicate — ignore silently
+
+              const { referrerId } = result;
+              const referrer = await UserModel.findById(referrerId);
+              if (!referrer) return;
+
+              // In-app notification to referrer
+              await NotificationModel.create({
+                recipientId:   referrerId,
+                recipientRole: 'user',
+                type:          NOTIFICATION_TYPE.REFERRAL_SIGNUP,
+                channel:       [NOTIFICATION_CHANNEL.IN_APP],
+                title:         'New referral signup!',
+                message:       `${fullName} just signed up using your referral code. You'll earn a reward once they subscribe.`,
+                status:        NOTIFICATION_STATUS.SENT,
+                sentAt:        new Date(),
+                data:          { newUserName: fullName, newUserEmail: email },
+              });
+
+              // Email notification to referrer
+              emailService.sendReferralSignupEmail(referrer.email, referrer.fullName, fullName)
+                .catch(e => logger.error('referral signup email error:', e));
+            } catch (refErr) {
+              logger.error('clientSignup referral handling error:', refErr);
+            }
+          })();
         }
 
         return {

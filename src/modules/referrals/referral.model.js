@@ -218,6 +218,44 @@ const ReferralModel = {
     }));
   },
 
+  async createInviteFromReferralCode({ referralCode, invitedEmail }) {
+    // Find the user who owns this referral code
+    const { rows } = await query(
+      'SELECT id FROM users WHERE referral_code = $1 AND is_deleted = FALSE LIMIT 1',
+      [referralCode.trim().toUpperCase()]
+    );
+    const referrer = rows[0];
+    if (!referrer) return null; // silently ignore unknown codes
+
+    const normalizedEmail = invitedEmail.trim().toLowerCase();
+
+    // Check if an invite for this email already exists from this referrer
+    const { rows: existing } = await query(
+      `SELECT id FROM referral_invites
+        WHERE inviter_user_id = $1 AND invited_email = $2
+        LIMIT 1`,
+      [referrer.id, normalizedEmail]
+    );
+    if (existing.length > 0) return null; // already recorded
+
+    for (let i = 0; i < 5; i += 1) {
+      const inviteCode = makeInviteCode();
+      try {
+        const { rows: inviteRows } = await query(
+          `INSERT INTO referral_invites
+             (inviter_user_id, invited_email, invite_code, status, source_type)
+           VALUES ($1, $2, $3, 'pending', 'user')
+           RETURNING *`,
+          [referrer.id, normalizedEmail, inviteCode]
+        );
+        return { invite: format(inviteRows[0]), referrerId: referrer.id };
+      } catch (err) {
+        if (err?.code !== '23505') throw err;
+      }
+    }
+    return null;
+  },
+
   async generateUserReferralCode(userId) {
     for (let i = 0; i < 10; i += 1) {
       const code = randomBytes(4).toString('hex').toUpperCase(); // e.g. "A3F2B1C9"

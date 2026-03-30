@@ -454,11 +454,71 @@ const sendEmail = async (email, subject, htmlContent, textContent) => {
   }
 };
 
+/**
+ * Notify a referrer that someone signed up using their referral code
+ */
+const sendReferralSignupEmail = async (referrerEmail, referrerName, newUserName) => {
+  try {
+    const transporter = getTransporter();
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <style>
+            body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #333; line-height: 1.6; margin: 0; padding: 0; }
+            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+            .header { background: linear-gradient(135deg, #155DFC 0%, #0f43c7 100%); color: white; padding: 40px 20px; border-radius: 10px 10px 0 0; text-align: center; }
+            .header h1 { margin: 0; font-size: 24px; letter-spacing: 1px; }
+            .body { background: #f9f9f9; padding: 30px 20px; border-radius: 0 0 10px 10px; }
+            .highlight { background: #155DFC; color: white; border-radius: 8px; padding: 16px 24px; text-align: center; margin: 20px 0; font-size: 18px; font-weight: bold; }
+            .footer { text-align: center; margin-top: 20px; color: #999; font-size: 12px; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>STYLE-U By VICELLE</h1>
+              <p style="margin:8px 0 0;">Affiliate Programme</p>
+            </div>
+            <div class="body">
+              <p>Hi <strong>${referrerName}</strong>,</p>
+              <p>Great news — someone just signed up to Vicelle using <strong>your referral code</strong>!</p>
+              <div class="highlight">🎉 ${newUserName} joined using your code</div>
+              <p>Once <strong>${newUserName}</strong> activates their account and starts a subscription, you'll automatically earn your referral reward in your wallet.</p>
+              <p>Keep sharing your code to earn more!</p>
+              <p style="margin-top:24px;">— The Vicelle Team</p>
+            </div>
+            <div class="footer">
+              <p>STYLE-U By VICELLE · Nigeria</p>
+            </div>
+          </div>
+        </body>
+      </html>
+    `;
+
+    const result = await transporter.sendMail({
+      from: config.email.from,
+      to: referrerEmail,
+      subject: `🎉 ${newUserName} signed up with your Vicelle referral code!`,
+      html: htmlContent,
+      text: `Hi ${referrerName}, ${newUserName} just signed up to Vicelle using your referral code. Once they subscribe, you'll earn your reward. Keep sharing!`,
+    });
+
+    logger.info(`Referral signup email sent to ${referrerEmail}`, { messageId: result.messageId });
+    return result;
+  } catch (error) {
+    logger.error(`Failed to send referral signup email to ${referrerEmail}:`, error);
+    throw error;
+  }
+};
+
 export default {
   sendActivationCodeEmail,
   sendOrderConfirmationEmail,
   sendPaymentConfirmationEmail,
   sendAdminJobResponseEmail,
+  sendReferralSignupEmail,
   sendEmail,
   getTransporter,
 };

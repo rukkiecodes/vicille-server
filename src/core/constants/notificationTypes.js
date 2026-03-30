@@ -48,6 +48,9 @@ export const NOTIFICATION_TYPE = {
   PERFORMANCE_WARNING: 'performance_warning',
   CAPACITY_ADJUSTED: 'capacity_adjusted',
 
+  // Referral
+  REFERRAL_SIGNUP: 'referral_signup',
+
   // Admin Notifications
   NEW_USER_REGISTRATION: 'new_user_registration',
   NEW_TAILOR_APPLICATION: 'new_tailor_application',

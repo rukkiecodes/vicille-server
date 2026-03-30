@@ -57,6 +57,7 @@ const authTypeDefs = gql`
     fullName: String!
     email: String!
     phone: String
+    referralCode: String
   }
 
   input SpecialtyInput {
