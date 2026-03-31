@@ -49,6 +49,7 @@ const referralTypeDefs = gql`
     createReferralInvite(invitedEmail: String!): ReferralInvite!
     claimReferralInvite(inviteCode: String!): ReferralInvite!
     generateMyReferralCode: String!
+    submitReferralCode(referralCode: String!): Boolean!
   }
 `;
 

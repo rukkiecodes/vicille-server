@@ -218,6 +218,47 @@ const ReferralModel = {
     }));
   },
 
+  async linkUserToReferralCode({ referralCode, newUserId, newUserEmail }) {
+    // Find the referrer who owns this code
+    const { rows } = await query(
+      `SELECT id FROM users
+        WHERE referral_code = $1
+          AND id != $2
+          AND is_deleted = FALSE
+        LIMIT 1`,
+      [referralCode.trim().toUpperCase(), newUserId]
+    );
+    const referrer = rows[0];
+    if (!referrer) return null;
+
+    // Check not already linked
+    const { rows: existing } = await query(
+      `SELECT id FROM referral_invites
+        WHERE inviter_user_id = $1
+          AND (invited_user_id = $2 OR invited_email = $3)
+        LIMIT 1`,
+      [referrer.id, newUserId, newUserEmail.trim().toLowerCase()]
+    );
+    if (existing.length > 0) return null;
+
+    for (let i = 0; i < 5; i += 1) {
+      const inviteCode = makeInviteCode();
+      try {
+        const { rows: inviteRows } = await query(
+          `INSERT INTO referral_invites
+             (inviter_user_id, invited_user_id, invited_email, invite_code, status, source_type)
+           VALUES ($1, $2, $3, $4, 'accepted', 'user')
+           RETURNING *`,
+          [referrer.id, newUserId, newUserEmail.trim().toLowerCase(), inviteCode]
+        );
+        return { invite: format(inviteRows[0]), referrerId: referrer.id };
+      } catch (err) {
+        if (err?.code !== '23505') throw err;
+      }
+    }
+    return null;
+  },
+
   async createInviteFromReferralCode({ referralCode, invitedEmail }) {
     // Find the user who owns this referral code
     const { rows } = await query(
