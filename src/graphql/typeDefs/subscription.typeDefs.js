@@ -13,6 +13,7 @@ const subscriptionTypeDefs = gql`
     displayOrder: Int
     formattedPrice: String
     referralRewardNgn: Float
+    paystackPlanCode: String
     createdAt: DateTime!
     updatedAt: DateTime!
   }
@@ -52,11 +53,25 @@ const subscriptionTypeDefs = gql`
     isActive: Boolean
     isStylingWindowOpen: Boolean
     daysUntilNextBilling: Int
+    paystackSubscriptionCode: String
+    paymentChannel: String
+    renewalEnabled: Boolean
     createdAt: DateTime!
     updatedAt: DateTime!
     # Resolved fields
     planDetails: SubscriptionPlan
     userDetails: User
+  }
+
+  # Returned by initializeCardSubscription — open authorizationUrl in browser to complete payment.
+  type CardSubscriptionInit {
+    authorizationUrl: String!
+    reference:        String!
+    subscriptionId:   ID!
+  }
+
+  type SubscriptionManageLink {
+    link: String!
   }
 
   type SubscriptionBilling {
@@ -105,10 +120,15 @@ const subscriptionTypeDefs = gql`
     deactivateSubscriptionPlan(id: ID!): SubscriptionPlan!
 
     # User Subscriptions
-    subscribe(planId: ID!): UserSubscription!
+    # initializeCardSubscription: creates a pending subscription + returns Paystack hosted payment URL.
+    # User must open authorizationUrl, complete payment, and the webhook/callback activates the sub.
+    initializeCardSubscription(planId: ID!): CardSubscriptionInit!
+    initializeCardSubscriptionByCode(planCode: String!): CardSubscriptionInit!
     cancelSubscription(reason: String): UserSubscription!
     pauseSubscription: UserSubscription!
     resumeSubscription: UserSubscription!
+    getSubscriptionManageLink: SubscriptionManageLink!
+    sendSubscriptionManageEmail: Boolean!
   }
 
   input SubscriptionFilterInput {
