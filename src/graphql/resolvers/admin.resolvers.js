@@ -4,6 +4,7 @@ import UserModel from '../../modules/users/user.model.js';
 import TailorModel from '../../modules/tailors/tailor.model.js';
 import OrderModel from '../../modules/orders/order.model.js';
 import SubscriptionModel from '../../modules/subscriptions/subscription.model.js';
+import WalletModel from '../../modules/wallet/wallet.model.js';
 import { requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
 import { generateActivationCode } from '../../core/utils/randomCode.js';
 import emailService from '../../services/email.service.js';
@@ -141,6 +142,13 @@ const adminResolvers = {
         status: 'inactive',
         createdByAdminId: authAdmin.id,
       });
+
+      // Create wallet for the new user (non-fatal if it fails)
+      try {
+        await WalletModel.create(user.id);
+      } catch (walletError) {
+        logger.error(`createClientAccount: failed to create wallet for ${user.id}:`, walletError);
+      }
 
       try {
         await emailService.sendActivationCodeEmail(email, fullName, passcode);

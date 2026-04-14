@@ -82,6 +82,10 @@ const jobTypeDefs = gql`
     reassignJob(id: ID!, newTailorId: ID!, reason: String!): Job!
     updateJobStatus(id: ID!, status: String!, notes: String): Job!
     submitJobProof(id: ID!, photos: [ProofPhotoInput!]!, notes: String): Job!
+    approveQCProof(id: ID!): Job!
+    rejectQCProof(id: ID!, reason: String!): Job!
+    markJobOrderDispatched(id: ID!, input: DispatchRiderInput!): Order!
+    markJobOrderDelivered(id: ID!): Order!
   }
 
   input JobFilterInput {
@@ -96,6 +100,14 @@ const jobTypeDefs = gql`
   input ProofPhotoInput {
     base64: String!
     mimeType: String
+  }
+
+  input DispatchRiderInput {
+    name: String!
+    phone: String!
+    company: String
+    trackingNumber: String
+    notes: String
   }
 
   input CreateJobInput {

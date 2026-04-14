@@ -14,17 +14,11 @@ const paymentTypeDefs = gql`
     paymentId:            ID
   }
 
+  # Returned by initializeSubscriptionPayment — open redirectUrl in a WebView.
+  # After the user completes payment, Paystack fires webhooks that activate the subscription.
   type SubscriptionPaymentInit {
     redirectUrl: String!
     reference:   String!
-    paymentId:   ID!
-  }
-
-  type SubscriptionResult {
-    subscriptionId: ID!
-    paymentId:      ID!
-    status:         String!
-    message:        String
   }
 
   type PaymentMethod {
@@ -39,29 +33,31 @@ const paymentTypeDefs = gql`
     createdAt:           DateTime
   }
 
+  type CustomerPaymentTransaction {
+    reference:  String
+    status:     String!
+    amountKobo: Int!
+    amountNgn:  Float!
+    currency:   String!
+    channel:    String
+    paidAt:     DateTime
+    createdAt:  DateTime
+  }
+
   type NigeriaBank {
     name: String!
     code: String!
   }
 
   type NigeriaAccountVerification {
-    accountName: String!
+    accountName:   String!
     accountNumber: String!
-    bankCode: String!
+    bankCode:      String!
   }
 
   type PaymentConnection {
     nodes:    [Payment!]!
     pageInfo: PageInfo!
-  }
-
-  # ── Inputs ──────────────────────────────────────────────────────────────────
-
-  input CardInput {
-    number: String!
-    expiry: String!
-    cvv:    String!
-    name:   String!
   }
 
   input PaymentFilterInput {
@@ -81,20 +77,21 @@ const paymentTypeDefs = gql`
       pagination: PaginationInput
     ): PaymentConnection!
     myPayments(pagination: PaginationInput): PaymentConnection!
-    myPaymentMethods: [PaymentMethod!]!
-    nigeriaBanks: [NigeriaBank!]!
+    myPaystackTransactions(limit: Int = 50, page: Int = 1): [CustomerPaymentTransaction!]!
+    myPaymentMethods:                       [PaymentMethod!]!
+    nigeriaBanks:                           [NigeriaBank!]!
   }
 
   # ── Mutations ───────────────────────────────────────────────────────────────
 
   extend type Mutation {
-    # PayPal: collect card natively, vault + charge in one call
-    subscribeWithCard(planId: ID!, card: CardInput!): SubscriptionResult!
-
-    # Legacy Paystack: open checkout URL in browser
+    # Card subscription via Paystack hosted checkout.
+    # Creates a pending subscription record and returns the Paystack payment URL.
+    # The subscription becomes active once the payment webhook fires.
     initializeSubscriptionPayment(planId: ID!, callbackUrl: String): SubscriptionPaymentInit!
-    verifyPayment(reference: String!):                Payment!
-    refundPayment(id: ID!, amount: Float, reason: String): Payment!
+
+    verifyPayment(reference: String!):                              Payment!
+    refundPayment(id: ID!, amount: Float, reason: String):          Payment!
     verifyNigeriaBankAccount(bankCode: String!, accountNumber: String!): NigeriaAccountVerification!
   }
 `;

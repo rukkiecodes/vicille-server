@@ -158,7 +158,7 @@ const authResolvers = {
         if (!updatedUser.paystackCustomerCode) {
           const PAY_URL = process.env.PAYMENTS_SERVICE_URL || process.env.VICELLE_PAY_URL || 'http://localhost:5000';
           const PAY_KEY = process.env.INTERNAL_SERVICE_KEY || '';
-          fetch(`${PAY_URL}/payment/customer/ensure`, {
+          fetch(`${PAY_URL}/customer/ensure`, {
             method:  'POST',
             headers: { 'x-service-key': PAY_KEY, 'Content-Type': 'application/json' },
             body: JSON.stringify({

@@ -595,3 +595,55 @@ test('[contract] tailor verificationStatus drives pending screen redirect — fi
   assert.ok('verificationStatus' in tailor || tailor.verificationStatus !== undefined || true,
     'verificationStatus must be in auth payload for pending screen logic');
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 6. DELIVERY GUARDRAILS
+// ══════════════════════════════════════════════════════════════════════════════
+
+test('[jobs] markJobOrderDelivered - assigned tailor can mark delivered from delivery-in-progress', async () => {
+  const JobModel = (await import('../src/modules/jobs/job.model.js')).default;
+  const OrderModel = (await import('../src/modules/orders/order.model.js')).default;
+
+  let capturedUpdate = null;
+  JobModel.findById = async () => fakeJob({ id: 'job-1', tailor: 'tailor-123', order: 'order-1', status: 'qc_approved' });
+  OrderModel.findByIdFresh = async () => ({ id: 'order-1', status: 'package_ready_delivery_in_progress' });
+  OrderModel.updateStatus = async (...args) => {
+    capturedUpdate = args;
+    return { id: 'order-1', status: 'delivered', deliveredAt: new Date().toISOString() };
+  };
+
+  const { default: jobResolvers } = await import('../src/graphql/resolvers/job.resolvers.js');
+  const result = await jobResolvers.Mutation.markJobOrderDelivered(null, { id: 'job-1' }, tailorCtx('tailor-123'));
+
+  assert.equal(result.status, 'delivered');
+  assert.deepEqual(capturedUpdate.slice(0, 4), ['order-1', 'delivered', 'tailor-123', 'tailor']);
+});
+
+test('[jobs] markJobOrderDelivered - rejects unassigned tailor', async () => {
+  const JobModel = (await import('../src/modules/jobs/job.model.js')).default;
+  JobModel.findById = async () => fakeJob({ id: 'job-1', tailor: 'tailor-other', order: 'order-1', status: 'qc_approved' });
+
+  const { default: jobResolvers } = await import('../src/graphql/resolvers/job.resolvers.js');
+  await assert.rejects(
+    () => jobResolvers.Mutation.markJobOrderDelivered(null, { id: 'job-1' }, tailorCtx('tailor-123')),
+    (err) => { assert.equal(err?.extensions?.code, 'FORBIDDEN'); return true; }
+  );
+});
+
+test('[orders] updateOrderStatus - delivered rejected for unassigned tailor', async () => {
+  const OrderModel = (await import('../src/modules/orders/order.model.js')).default;
+  const JobModel = (await import('../src/modules/jobs/job.model.js')).default;
+
+  OrderModel.findByIdFresh = async () => ({ id: 'order-1', status: 'package_ready_delivery_in_progress' });
+  JobModel.findByOrder = async () => [fakeJob({ id: 'job-1', order: 'order-1', tailor: 'tailor-other' })];
+
+  const { default: orderResolvers } = await import('../src/graphql/resolvers/order.resolvers.js');
+  await assert.rejects(
+    () => orderResolvers.Mutation.updateOrderStatus(
+      null,
+      { id: 'order-1', status: 'delivered', notes: 'drop-off done' },
+      tailorCtx('tailor-123')
+    ),
+    (err) => { assert.equal(err?.extensions?.code, 'FORBIDDEN'); return true; }
+  );
+});

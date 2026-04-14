@@ -16,9 +16,10 @@
     "migrate:015": "node migrations/run-015.js",
     "migrate:016": "node migrations/run-016.js",
     "migrate:017": "node migrations/run-017.js",
-    "test": "jest --coverage",
-    "test:unit": "jest --testPathPattern=tests/unit",
-    "test:integration": "jest --testPathPattern=tests/integration",
+    "test": "node --experimental-test-module-mocks --test tests/unit/*.test.js tests/integration/*.test.js",
+    "test:unit": "node --experimental-test-module-mocks --test tests/unit/*.test.js",
+    "test:integration": "node --experimental-test-module-mocks --test tests/integration/*.test.js",
+    "test:legacy": "node --test tests/payment.resolvers.node.test.js tests/tailor.features.node.test.js",
     "lint": "eslint src/",
     "lint:fix": "eslint src/ --fix",
     "format": "prettier --write \"src/**/*.js\""
@@ -73,7 +74,7 @@
     "supertest": "^6.3.3"
   },
   "engines": {
-    "node": ">=18.0.0 <21.0.0",
+    "node": ">=18.0.0",
     "npm": ">=9.0.0"
   }
 }

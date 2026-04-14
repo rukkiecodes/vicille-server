@@ -10,10 +10,27 @@ import { requireAuth, requireAdmin, requireTailor, buildPaginatedResponse, entit
 import emailService from '../../services/email.service.js';
 import { cloudinaryConfig } from '../../config/cloudinary.js';
 import logger from '../../core/logger/index.js';
+import { ORDER_STATUS } from '../../core/constants/orderStatus.js';
 
 cloudinary.config(cloudinaryConfig);
 
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'hello@vicelleclothing.com';
+
+async function resolveJobForQC(idOrOrderId) {
+  // User app passes order id, while admin tooling may pass job id.
+  const directJob = await JobModel.findById(idOrOrderId);
+  if (directJob) {
+    return directJob;
+  }
+
+  const orderJobs = await JobModel.findByOrder(idOrOrderId);
+  if (!orderJobs?.length) {
+    return null;
+  }
+
+  const readyForQc = orderJobs.find((j) => j.status === 'ready_for_qc');
+  return readyForQc || orderJobs[0];
+}
 
 const jobResolvers = {
   Job: {
@@ -260,7 +277,7 @@ const jobResolvers = {
     },
 
     startJob: async (_, { id }, context) => {
-      const authUser = requireTailor(context);
+      requireTailor(context);
       const job = await JobModel.findById(id);
       if (!job) {
         throw new GraphQLError('Job not found', {
@@ -273,7 +290,7 @@ const jobResolvers = {
     },
 
     completeJob: async (_, { id, proof }, context) => {
-      const authUser = requireTailor(context);
+      requireTailor(context);
       const job = await JobModel.findById(id);
       if (!job) {
         throw new GraphQLError('Job not found', {
@@ -360,8 +377,11 @@ const jobResolvers = {
                 ],
               },
               (err, result) => {
-                if (err) reject(err);
-                else resolve(result.secure_url);
+                if (err) {
+                  reject(err);
+                } else {
+                  resolve(result.secure_url);
+                }
               }
             );
           });
@@ -388,6 +408,264 @@ const jobResolvers = {
       });
 
       return entityToJSON(updated);
+    },
+
+    approveQCProof: async (_, { id }, context) => {
+      const authUser = requireAuth(context);
+      const role = authUser.role || authUser.type || 'user';
+      const job = await resolveJobForQC(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (role !== 'admin') {
+        if (!job.order) {
+          throw new GraphQLError('No order is linked to this job', { extensions: { code: 'BAD_REQUEST' } });
+        }
+        const order = await OrderModel.findByIdFresh(job.order);
+        if (!order) {
+          throw new GraphQLError('Order not found', { extensions: { code: 'NOT_FOUND' } });
+        }
+        if (order.user !== authUser.id) {
+          throw new GraphQLError('Insufficient permissions', { extensions: { code: 'FORBIDDEN' } });
+        }
+      }
+      if (job.status !== 'ready_for_qc') {
+        throw new GraphQLError('Job must be in ready_for_qc status to approve', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      const statusHistory = [...(job.statusHistory || []), {
+        status: 'qc_approved',
+        changedAt: new Date().toISOString(),
+        changedBy: authUser.id,
+        notes: role === 'admin' ? 'Proof approved by admin' : 'Proof approved by client',
+      }];
+
+      const updated = await JobModel.findByIdAndUpdate(job.id, {
+        status: 'qc_approved',
+        statusHistory,
+        revisionNotes: null,
+      });
+
+      if (!updated) {
+        throw new GraphQLError('Failed to update job', { extensions: { code: 'INTERNAL_SERVER_ERROR' } });
+      }
+
+      // Once QC is approved, advance the linked order into a delivery-ready stage.
+      if (job.order) {
+        const linkedOrder = await OrderModel.findByIdFresh(job.order);
+        if (linkedOrder?.status === ORDER_STATUS.PRODUCTION_IN_PROGRESS) {
+          await OrderModel.updateStatus(
+            linkedOrder.id,
+            ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED,
+            authUser.id,
+            role,
+            role === 'admin'
+              ? 'QC approved — order moved to package ready'
+              : 'QC approved by client — order moved to package ready'
+          );
+        }
+      }
+
+      return entityToJSON(updated);
+    },
+
+    rejectQCProof: async (_, { id, reason }, context) => {
+      const authUser = requireAuth(context);
+      const role = authUser.role || authUser.type || 'user';
+      const job = await resolveJobForQC(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (role !== 'admin') {
+        if (!job.order) {
+          throw new GraphQLError('No order is linked to this job', { extensions: { code: 'BAD_REQUEST' } });
+        }
+        const order = await OrderModel.findByIdFresh(job.order);
+        if (!order) {
+          throw new GraphQLError('Order not found', { extensions: { code: 'NOT_FOUND' } });
+        }
+        if (order.user !== authUser.id) {
+          throw new GraphQLError('Insufficient permissions', { extensions: { code: 'FORBIDDEN' } });
+        }
+      }
+      if (job.status !== 'ready_for_qc') {
+        throw new GraphQLError('Job must be in ready_for_qc status to reject', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      const statusHistory = [...(job.statusHistory || []), {
+        status: 'in_progress',
+        changedAt: new Date().toISOString(),
+        changedBy: authUser.id,
+        notes: role === 'admin' ? `Proof rejected: ${reason}` : `Proof rejected by client: ${reason}`,
+      }];
+
+      const updated = await JobModel.findByIdAndUpdate(job.id, {
+        status: 'in_progress',
+        statusHistory,
+        revisionNotes: reason,
+      });
+
+      if (!updated) {
+        throw new GraphQLError('Failed to update job', { extensions: { code: 'INTERNAL_SERVER_ERROR' } });
+      }
+
+      return entityToJSON(updated);
+    },
+
+    markJobOrderDispatched: async (_, { id, input }, context) => {
+      const authUser = requireTailor(context);
+      const job = await JobModel.findById(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (job.tailor !== authUser.id) {
+        throw new GraphQLError('This job is not assigned to you', { extensions: { code: 'FORBIDDEN' } });
+      }
+      if (!job.order) {
+        throw new GraphQLError('No order is linked to this job', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      const order = await OrderModel.findByIdFresh(job.order);
+      if (!order) {
+        throw new GraphQLError('Order not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      const deliveryAllowedStatuses = [
+        ORDER_STATUS.PRODUCTION_IN_PROGRESS,
+        ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS,
+        ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED,
+      ];
+      if (!deliveryAllowedStatuses.includes(order.status)) {
+        throw new GraphQLError('Order is not ready for delivery yet', { extensions: { code: 'BAD_REQUEST' } });
+      }
+      if (order.dispatchedAt) {
+        throw new GraphQLError('Dispatch details have already been submitted', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      const dispatchedAt = new Date();
+      const dispatchRider = {
+        name: input.name,
+        phone: input.phone,
+        company: input.company || null,
+        tracking_number: input.trackingNumber || null,
+        notes: input.notes || null,
+        dispatched_at: dispatchedAt.toISOString(),
+      };
+
+      let currentStatus = order.status;
+
+      // If QC is approved but order still sits in production, advance it to package-ready first.
+      if (currentStatus === ORDER_STATUS.PRODUCTION_IN_PROGRESS) {
+        await OrderModel.updateStatus(
+          order.id,
+          ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED,
+          authUser.id,
+          'tailor',
+          'Tailor started delivery after QC approval — order moved to package ready'
+        );
+        currentStatus = ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED;
+      }
+
+      // If order is in payment_required stage, step it into delivery first.
+      if (currentStatus === ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED) {
+        await OrderModel.updateStatus(
+          order.id,
+          ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS,
+          authUser.id,
+          'tailor',
+          'Tailor dispatched order — moved to delivery in progress'
+        );
+        currentStatus = ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS;
+      }
+
+      // Step order to shipped
+      await OrderModel.updateStatus(
+        order.id,
+        ORDER_STATUS.SHIPPED,
+        authUser.id,
+        'tailor',
+        `Order shipped via dispatch rider: ${input.name} (${input.phone})`
+      );
+
+      const updatedOrder = await OrderModel.findByIdAndUpdate(order.id, {
+        dispatchedAt,
+        trackingNumber: input.trackingNumber || order.trackingNumber || null,
+        deliveryProofUrl: JSON.stringify({
+          type: 'dispatch_rider',
+          dispatchRider,
+          submittedByTailorId: authUser.id,
+        }),
+      });
+
+      return entityToJSON(updatedOrder);
+    },
+
+    markJobOrderDelivered: async (_, { id }, context) => {
+      const authUser = requireTailor(context);
+      const job = await JobModel.findById(id);
+      if (!job) {
+        throw new GraphQLError('Job not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+      if (job.tailor !== authUser.id) {
+        throw new GraphQLError('This job is not assigned to you', { extensions: { code: 'FORBIDDEN' } });
+      }
+      if (!job.order) {
+        throw new GraphQLError('No order is linked to this job', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      const order = await OrderModel.findByIdFresh(job.order);
+      if (!order) {
+        throw new GraphQLError('Order not found', { extensions: { code: 'NOT_FOUND' } });
+      }
+
+      const deliveryAllowedStatuses = [
+        ORDER_STATUS.PRODUCTION_IN_PROGRESS,
+        ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS,
+        ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED,
+      ];
+      if (!deliveryAllowedStatuses.includes(order.status)) {
+        throw new GraphQLError('Order is not ready for delivery yet', { extensions: { code: 'BAD_REQUEST' } });
+      }
+
+      try {
+        let currentStatus = order.status;
+
+        // If QC is approved but order still sits in production, advance it to package-ready first.
+        if (currentStatus === ORDER_STATUS.PRODUCTION_IN_PROGRESS) {
+          await OrderModel.updateStatus(
+            order.id,
+            ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED,
+            authUser.id,
+            'tailor',
+            'Tailor started delivery after QC approval — order moved to package ready'
+          );
+          currentStatus = ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED;
+        }
+
+        // If order is still in payment_required stage, step it into delivery first.
+        if (currentStatus === ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED) {
+          await OrderModel.updateStatus(
+            order.id,
+            ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS,
+            authUser.id,
+            'tailor',
+            'Tailor started delivery — order moved to delivery in progress'
+          );
+          currentStatus = ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS;
+        }
+
+        const updatedOrder = await OrderModel.updateStatus(
+          order.id,
+          ORDER_STATUS.SHIPPED,
+          authUser.id,
+          'tailor',
+          'Order shipped — tailor delivering personally'
+        );
+        return entityToJSON(updatedOrder);
+      } catch (error) {
+        throw new GraphQLError(error.message || 'Failed to mark order as shipped', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
     },
   },
 };

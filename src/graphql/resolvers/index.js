@@ -11,6 +11,7 @@ import adminResolvers from './admin.resolvers.js';
 import styleResolvers from './style.resolvers.js';
 import referralResolvers from './referral.resolvers.js';
 import ratingResolvers from './rating.resolvers.js';
+import walletResolvers from './wallet.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -26,6 +27,7 @@ const resolvers = [
   styleResolvers,
   referralResolvers,
   ratingResolvers,
+  walletResolvers,
 ];
 
 export default resolvers;

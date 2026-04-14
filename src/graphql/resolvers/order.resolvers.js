@@ -1,15 +1,20 @@
 import { GraphQLError } from 'graphql';
+import { v2 as cloudinary } from 'cloudinary';
 import OrderModel from '../../modules/orders/order.model.js';
 import OrderItemModel from '../../modules/orders/orderItem.model.js';
 import UserModel from '../../modules/users/user.model.js';
 import JobModel from '../../modules/jobs/job.model.js';
 import TailorModel from '../../modules/tailors/tailor.model.js';
+import RatingModel from '../../modules/ratings/rating.model.js';
 import { requireAuth, requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
 import { ORDER_STATUS } from '../../core/constants/orderStatus.js';
 import { query as dbQuery } from '../../infrastructure/database/postgres.js';
 import logger from '../../core/logger/index.js';
+import { cloudinaryConfig } from '../../config/cloudinary.js';
 
 const DEFAULT_PAGE_LIMIT = 20;
+
+cloudinary.config(cloudinaryConfig);
 
 function getMonthWindowBounds(year, monthIndex) {
   const lastDay = new Date(Date.UTC(year, monthIndex + 1, 0)).getUTCDate();
@@ -554,16 +559,209 @@ const orderResolvers = {
     },
 
     updateOrderStatus: async (_, { id, status, notes }, context) => {
-      requireAuth(context);
+      const authUser = requireAuth(context);
+      const role = authUser.role || authUser.type || 'user';
+
+      if (status === ORDER_STATUS.DELIVERED) {
+        if (role !== 'admin' && role !== 'tailor') {
+          throw new GraphQLError('Only admin or assigned tailor can mark an order as delivered', {
+            extensions: { code: 'FORBIDDEN' },
+          });
+        }
+
+        const order = await OrderModel.findByIdFresh(id);
+        if (!order) {
+          throw new GraphQLError('Order not found', {
+            extensions: { code: 'NOT_FOUND' },
+          });
+        }
+
+        if (order.status !== ORDER_STATUS.SHIPPED) {
+          throw new GraphQLError('Order is not in shipped stage', {
+            extensions: { code: 'BAD_USER_INPUT' },
+          });
+        }
+
+        if (role === 'tailor') {
+          const jobs = await JobModel.findByOrder(order.id);
+          const assignedJob = jobs?.[0];
+          if (!assignedJob || assignedJob.tailor !== authUser.id) {
+            throw new GraphQLError('Only the assigned tailor can mark this order as delivered', {
+              extensions: { code: 'FORBIDDEN' },
+            });
+          }
+        }
+      }
+
       try {
         const order = await OrderModel.updateStatus(
           id,
           status,
-          context.user.id,
-          context.user.role || context.user.type || 'user',
+          authUser.id,
+          role,
           notes
         );
         return entityToJSON(order);
+      } catch (error) {
+        throw new GraphQLError(error.message, {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+    },
+
+    confirmDelivery: async (_, { id, input }, context) => {
+      const authUser = requireAuth(context);
+      const order = await OrderModel.findByIdFresh(id);
+      if (!order) {
+        throw new GraphQLError('Order not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+      if (order.user !== authUser.id) {
+        throw new GraphQLError('Only the order owner can confirm delivery', {
+          extensions: { code: 'FORBIDDEN' },
+        });
+      }
+      const confirmableStatuses = new Set([
+        ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS,
+        ORDER_STATUS.SHIPPED,
+        ORDER_STATUS.DELIVERED,
+      ]);
+      if (!confirmableStatuses.has(order.status)) {
+        throw new GraphQLError('Order has not reached delivery stage yet', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+
+      const jobs = await JobModel.findByOrder(order.id);
+      const linkedJob = jobs?.[0] || null;
+
+      let receiptPhotoUrls = [];
+      if (Array.isArray(input?.photos) && input.photos.length) {
+        receiptPhotoUrls = await Promise.all(
+          input.photos.map((p, i) => {
+            const dataUri = `data:${p.mimeType || 'image/jpeg'};base64,${p.base64}`;
+            return new Promise((resolve, reject) => {
+              cloudinary.uploader.upload(
+                dataUri,
+                {
+                  folder: 'vicelle/order-receipts',
+                  public_id: `order-${order.id}-receipt-${i}-${Date.now()}`,
+                  transformation: [
+                    { width: 1600, height: 1600, crop: 'limit' },
+                    { quality: 'auto' },
+                  ],
+                },
+                (err, result) => {
+                  if (err) {
+                    reject(err);
+                  } else {
+                    resolve(result.secure_url);
+                  }
+                }
+              );
+            });
+          })
+        );
+      }
+
+      try {
+        let updated = order;
+        if (order.status === ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS) {
+          await OrderModel.updateStatus(
+            id,
+            ORDER_STATUS.SHIPPED,
+            authUser.id,
+            'user',
+            'Delivery confirmation flow auto-advanced order to shipped'
+          );
+          updated = await OrderModel.findByIdFresh(id);
+        }
+
+        if (updated.status !== ORDER_STATUS.DELIVERED) {
+          updated = await OrderModel.updateStatus(
+            id,
+            ORDER_STATUS.DELIVERED,
+            authUser.id,
+            'user',
+            'Delivery confirmed by client'
+          );
+        }
+
+        let refreshed = updated;
+
+        if (receiptPhotoUrls.length || input?.note) {
+          const existingProof = (updated?.deliveryProof && typeof updated.deliveryProof === 'object')
+            ? updated.deliveryProof
+            : {};
+
+          const mergedProof = {
+            ...existingProof,
+            customerConfirmation: {
+              confirmedAt: new Date().toISOString(),
+              confirmedByUserId: authUser.id,
+              photos: receiptPhotoUrls,
+              note: input?.note || null,
+            },
+          };
+
+          refreshed = await OrderModel.findByIdAndUpdate(id, {
+            deliveryProofUrl: JSON.stringify(mergedProof),
+          });
+        }
+
+        if (
+          linkedJob &&
+          linkedJob.tailor &&
+          Number.isInteger(input?.reviewStars) &&
+          input.reviewStars >= 1 &&
+          input.reviewStars <= 5
+        ) {
+          try {
+            await RatingModel.create({
+              tailor: linkedJob.tailor,
+              job: linkedJob.id,
+              ratedBy: authUser.id,
+              craftsmanship: input.reviewStars,
+              accuracy: input.reviewStars,
+              timeliness: input.reviewStars,
+              communication: input.reviewStars,
+              overallRating: input.reviewStars,
+              comments: input.reviewComment || null,
+              impactsPerformance: true,
+            });
+
+            const avg = await RatingModel.calculateTailorAverage(linkedJob.tailor);
+            await TailorModel.findByIdAndUpdate(linkedJob.tailor, { averageRating: avg.avgOverall });
+          } catch (ratingError) {
+            logger.warn('confirmDelivery: rating save skipped', {
+              orderId: id,
+              jobId: linkedJob.id,
+              userId: authUser.id,
+              error: ratingError?.message || 'unknown',
+            });
+          }
+        }
+
+        if (input?.saveTailor && linkedJob?.tailor) {
+          try {
+            await dbQuery(
+              `INSERT INTO user_saved_tailors (user_id, tailor_id)
+               VALUES ($1,$2)
+               ON CONFLICT (user_id, tailor_id) DO NOTHING`,
+              [authUser.id, linkedJob.tailor]
+            );
+          } catch (saveTailorError) {
+            logger.warn('confirmDelivery: saveTailor skipped', {
+              orderId: id,
+              tailorId: linkedJob.tailor,
+              userId: authUser.id,
+              error: saveTailorError?.message || 'unknown',
+            });
+          }
+        }
+
+        return entityToJSON(refreshed || updated);
       } catch (error) {
         throw new GraphQLError(error.message, {
           extensions: { code: 'BAD_USER_INPUT' },

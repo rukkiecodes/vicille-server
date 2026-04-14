@@ -78,6 +78,9 @@ const config = {
       publicKey: process.env.PAYSTACK_PUBLIC_KEY,
       webhookSecret: process.env.PAYMENT_WEBHOOK_SECRET,
     },
+    // Internal service-to-service communication
+    paymentsServiceUrl:  process.env.PAYMENTS_SERVICE_URL  || '',
+    internalServiceKey:  process.env.INTERNAL_SERVICE_KEY  || '',
   },
 
   // Cloudinary

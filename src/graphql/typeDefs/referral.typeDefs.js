@@ -5,6 +5,7 @@ const referralTypeDefs = gql`
     id: ID!
     inviterUserId: ID!
     invitedUserId: ID
+    invitedName: String
     invitedEmail: String
     inviteCode: String!
     status: String!
@@ -46,7 +47,7 @@ const referralTypeDefs = gql`
   }
 
   extend type Mutation {
-    createReferralInvite(invitedEmail: String!): ReferralInvite!
+    createReferralInvite(invitedName: String!, invitedEmail: String!, referralCode: String!): ReferralInvite!
     claimReferralInvite(inviteCode: String!): ReferralInvite!
     generateMyReferralCode: String!
     submitReferralCode(referralCode: String!): Boolean!

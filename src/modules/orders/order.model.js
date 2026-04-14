@@ -10,6 +10,23 @@ import {
 } from '../../core/constants/orderStatus.js';
 const CACHE_TTL = 3600;
 
+function parseDeliveryProof(value) {
+  if (!value) {
+    return null;
+  }
+  if (typeof value === 'object') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  }
+  return null;
+}
+
 function normalizeOrderType(value) {
   const v = (value || '').toString().trim().toLowerCase();
   if (v === 'subscription') {
@@ -51,9 +68,10 @@ function format(row) {
     deliveryMethod:       row.delivery_method,
     trackingNumber:       row.tracking_number,
     dispatchedAt:         row.dispatched_at,
+    shippedAt:            row.shipped_at,
     deliveredAt:          row.delivered_at,
     deliveredBy:          row.delivered_by,
-    deliveryProof:        row.delivery_proof_url,
+    deliveryProof:        parseDeliveryProof(row.delivery_proof_url),
     totalAmount:          row.total_amount,
     amountPaid:           row.amount_paid,
     outstandingBalance:   row.outstanding_balance,
@@ -190,6 +208,7 @@ const OrderModel = {
       deliveryMethod:          'delivery_method',
       trackingNumber:          'tracking_number',
       dispatchedAt:            'dispatched_at',
+      shippedAt:               'shipped_at',
       deliveredAt:             'delivered_at',
       deliveredBy:             'delivered_by',
       deliveryProofUrl:        'delivery_proof_url',
@@ -235,6 +254,13 @@ const OrderModel = {
       updates.stylingWindowLockedAt = new Date();
       updates.productionStartedAt   = new Date();
       updates.productionStartedBy   = changedById;
+    }
+    if (newStatus === ORDER_STATUS.SHIPPED) {
+      updates.shippedAt = new Date();
+    }
+    if (newStatus === ORDER_STATUS.DELIVERED) {
+      updates.deliveredAt = new Date();
+      updates.deliveredBy = changedById;
     }
     const updated = await this.findByIdAndUpdate(id, updates);
     // Record status history

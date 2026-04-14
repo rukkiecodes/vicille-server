@@ -41,7 +41,7 @@ function format(row) {
     flagReason:           row.flag_reason,
     flaggedBy:            row.flagged_by,
     resolvedAt:           row.resolved_at,
-    revisionNotes:        row.revision_notes || row.completion_proof?.revision_notes || null,
+    revisionNotes:        row.revision_notes || null,
     createdAt:            row.created_at,
     updatedAt:            row.updated_at,
   };

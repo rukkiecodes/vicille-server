@@ -3,6 +3,7 @@ export const ORDER_STATUS = {
   PRODUCTION_IN_PROGRESS: 'production_in_progress',
   PACKAGE_READY_PAYMENT_REQUIRED: 'package_ready_payment_required',
   PACKAGE_READY_DELIVERY_IN_PROGRESS: 'package_ready_delivery_in_progress',
+  SHIPPED: 'shipped',
   DELIVERED: 'delivered',
   CANCELLED: 'cancelled',
 };
@@ -21,6 +22,9 @@ export const ORDER_STATUS_TRANSITIONS = {
     ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS,
   ],
   [ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS]: [
+    ORDER_STATUS.SHIPPED,
+  ],
+  [ORDER_STATUS.SHIPPED]: [
     ORDER_STATUS.DELIVERED,
   ],
   [ORDER_STATUS.DELIVERED]: [],

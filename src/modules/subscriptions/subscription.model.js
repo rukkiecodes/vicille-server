@@ -3,23 +3,27 @@ import { query } from '../../infrastructure/database/postgres.js';
 function format(row) {
   if (!row) return null;
   const s = {
-    id:              row.id,
-    entityId:        row.id,
-    user:            row.user_id,
-    userId:          row.user_id,
-    plan:            row.plan_id,
-    planId:          row.plan_id,
-    status:          row.status,
-    billing:         row.billing,
-    currentCycle:    row.current_cycle,
-    paymentStatus:   row.payment_status,
-    gracePeriodEnds: row.grace_period_ends,
-    startDate:       row.start_date,
-    endDate:         row.end_date,
-    renewalEnabled:  row.renewal_enabled,
-    cancellation:    row.cancellation,
-    createdAt:       row.created_at,
-    updatedAt:       row.updated_at,
+    id:                      row.id,
+    entityId:                row.id,
+    user:                    row.user_id,
+    userId:                  row.user_id,
+    plan:                    row.plan_id,
+    planId:                  row.plan_id,
+    status:                  row.status,
+    billing:                 row.billing,
+    currentCycle:            row.current_cycle,
+    paymentStatus:           row.payment_status,
+    gracePeriodEnds:         row.grace_period_ends,
+    startDate:               row.start_date,
+    endDate:                 row.end_date,
+    renewalEnabled:          row.renewal_enabled,
+    cancellation:            row.cancellation,
+    paystackSubscriptionCode: row.paystack_subscription_code || null,
+    paystackEmailToken:      row.paystack_email_token || null,
+    authorizationCode:       row.authorization_code || null,
+    paymentChannel:          row.payment_channel || 'card',
+    createdAt:               row.created_at,
+    updatedAt:               row.updated_at,
   };
 
   Object.defineProperties(s, {
@@ -47,6 +51,9 @@ function format(row) {
     billing: s.billing, currentCycle: s.currentCycle, paymentStatus: s.paymentStatus,
     gracePeriodEnds: s.gracePeriodEnds, startDate: s.startDate, endDate: s.endDate,
     renewalEnabled: s.renewalEnabled, cancellation: s.cancellation,
+    paystackSubscriptionCode: s.paystackSubscriptionCode,
+    paymentChannel: s.paymentChannel,
+    // authorizationCode and paystackEmailToken are internal — not exposed to clients
     createdAt: s.createdAt, updatedAt: s.updatedAt,
     isActive: s.isActive, isStylingWindowOpen: s.isStylingWindowOpen,
     daysUntilNextBilling: s.daysUntilNextBilling, isInGracePeriod: s.isInGracePeriod,
@@ -86,16 +93,20 @@ const SubscriptionModel = {
 
   async findByIdAndUpdate(id, updates) {
     const colMap = {
-      status:          'status',
-      billing:         'billing',
-      nextBillingDate: 'next_billing_date',
-      currentCycle:    'current_cycle',
-      paymentStatus:   'payment_status',
-      gracePeriodEnds: 'grace_period_ends',
-      startDate:       'start_date',
-      endDate:         'end_date',
-      renewalEnabled:  'renewal_enabled',
-      cancellation:    'cancellation',
+      status:                   'status',
+      billing:                  'billing',
+      nextBillingDate:          'next_billing_date',
+      currentCycle:             'current_cycle',
+      paymentStatus:            'payment_status',
+      gracePeriodEnds:          'grace_period_ends',
+      startDate:                'start_date',
+      endDate:                  'end_date',
+      renewalEnabled:           'renewal_enabled',
+      cancellation:             'cancellation',
+      paystackSubscriptionCode: 'paystack_subscription_code',
+      paystackEmailToken:       'paystack_email_token',
+      authorizationCode:        'authorization_code',
+      paymentChannel:           'payment_channel',
     };
     const fields = [];
     const values = [];
@@ -200,6 +211,14 @@ const SubscriptionModel = {
 
   async resume(id) {
     return this.findByIdAndUpdate(id, { status: 'active' });
+  },
+
+  async findByPaystackCode(subscriptionCode) {
+    const { rows } = await query(
+      'SELECT * FROM user_subscriptions WHERE paystack_subscription_code=$1 LIMIT 1',
+      [subscriptionCode]
+    );
+    return format(rows[0] || null);
   },
 };
 

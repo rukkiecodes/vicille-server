@@ -44,13 +44,20 @@ const referralResolvers = {
   },
 
   Mutation: {
-    createReferralInvite: async (_, { invitedEmail }, context) => {
+    createReferralInvite: async (_, { invitedName, invitedEmail, referralCode }, context) => {
       const authUser = requireAuth(context);
 
       const activeSubscription = await hasConfirmedActiveSubscription(authUser.id);
       if (!activeSubscription) {
         throw new GraphQLError('Only users with confirmed active subscriptions can invite others', {
           extensions: { code: 'FORBIDDEN' },
+        });
+      }
+
+      const normalizedName = invitedName?.trim();
+      if (!normalizedName || normalizedName.length < 2) {
+        throw new GraphQLError('Friend name is required', {
+          extensions: { code: 'BAD_USER_INPUT' },
         });
       }
 
@@ -61,10 +68,41 @@ const referralResolvers = {
         });
       }
 
+      const myCode = await ReferralModel.getUserReferralCode(authUser.id);
+      if (!myCode) {
+        throw new GraphQLError('You do not have a referral code yet', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+      if ((referralCode || '').trim().toUpperCase() !== myCode.trim().toUpperCase()) {
+        throw new GraphQLError('Invalid referral code for this account', {
+          extensions: { code: 'BAD_USER_INPUT' },
+        });
+      }
+
       const invite = await ReferralModel.createInvite({
         inviterUserId: authUser.id,
+        invitedName: normalizedName,
         invitedEmail: normalizedEmail,
       });
+
+      const adminEmail = process.env.MAILING_EMAIL || process.env.SMTP_USER;
+      if (adminEmail) {
+        const subject = 'New referral invite pending admin approval';
+        const html = `
+          <div style="font-family:Segoe UI,Arial,sans-serif;padding:16px;color:#1f1a17;">
+            <h2 style="margin:0 0 8px;">Referral invite submitted</h2>
+            <p style="margin:0 0 8px;"><strong>Inviter:</strong> ${authUser.fullName || 'Vicelle user'} (${authUser.email || 'no-email'})</p>
+            <p style="margin:0 0 8px;"><strong>Referral code:</strong> ${myCode}</p>
+            <p style="margin:0 0 8px;"><strong>Invited friend:</strong> ${normalizedName} (${normalizedEmail})</p>
+            <p style="margin:12px 0 0;">Open Admin → Referrals → Invite Requests to approve and send passcode.</p>
+          </div>
+        `;
+        const text = `Referral invite submitted\nInviter: ${authUser.fullName || 'Vicelle user'} (${authUser.email || 'no-email'})\nReferral code: ${myCode}\nInvited friend: ${normalizedName} (${normalizedEmail})\nApprove in admin referrals invite requests.`;
+        emailService.sendEmail(adminEmail, subject, html, text).catch((e) => {
+          logger.error('createReferralInvite admin-notify email error:', e);
+        });
+      }
 
       return invite;
     },

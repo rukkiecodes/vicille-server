@@ -6,19 +6,20 @@ const CACHE_TTL = 3600;
 function format(row) {
   if (!row) return null;
   return {
-    id:            row.id,
-    entityId:      row.id,
-    name:          row.name,
-    slug:          row.slug,
-    description:   row.description,
-    pricing:       row.pricing,
-    features:      row.features,
-    stylingWindow: row.styling_window || { daysBeforeProduction: 7, reminderDays: [7, 3, 1] },
-    isActive:           row.is_active,
-    displayOrder:       row.display_order,
-    referralRewardNgn:  row.referral_reward_ngn != null ? Number(row.referral_reward_ngn) : null,
-    createdAt:          row.created_at,
-    updatedAt:          row.updated_at,
+    id:               row.id,
+    entityId:         row.id,
+    name:             row.name,
+    slug:             row.slug,
+    description:      row.description,
+    pricing:          row.pricing,
+    features:         row.features,
+    stylingWindow:    row.styling_window || { daysBeforeProduction: 7, reminderDays: [7, 3, 1] },
+    isActive:         row.is_active,
+    displayOrder:     row.display_order,
+    referralRewardNgn: row.referral_reward_ngn != null ? Number(row.referral_reward_ngn) : null,
+    paystackPlanCode: row.paystack_plan_code || null,
+    createdAt:        row.created_at,
+    updatedAt:        row.updated_at,
   };
 }
 
@@ -82,14 +83,15 @@ const SubscriptionPlanModel = {
 
   async findByIdAndUpdate(id, updates) {
     const colMap = {
-      name:          'name',
-      slug:          'slug',
-      description:   'description',
-      pricing:       'pricing',
-      features:      'features',
-      stylingWindow: 'styling_window',
-      isActive:      'is_active',
-      displayOrder:  'display_order',
+      name:             'name',
+      slug:             'slug',
+      description:      'description',
+      pricing:          'pricing',
+      features:         'features',
+      stylingWindow:    'styling_window',
+      isActive:         'is_active',
+      displayOrder:     'display_order',
+      paystackPlanCode: 'paystack_plan_code',
     };
     const fields = [];
     const values = [];
@@ -159,6 +161,23 @@ const SubscriptionPlanModel = {
       'SELECT id FROM subscription_plans WHERE slug=$1 LIMIT 1', [slug.toLowerCase()]
     );
     return rows.length > 0;
+  },
+
+  async findByPaystackCode(planCode) {
+    const { rows } = await query(
+      'SELECT * FROM subscription_plans WHERE paystack_plan_code=$1 LIMIT 1', [planCode]
+    );
+    return format(rows[0] || null);
+  },
+
+  async setPaystackPlanCode(id, planCode) {
+    const { rows } = await query(
+      `UPDATE subscription_plans SET paystack_plan_code=$1 WHERE id=$2 RETURNING *`,
+      [planCode, id]
+    );
+    const plan = format(rows[0] || null);
+    if (plan) { await clearPlanCache(id); await cachePlan(plan); }
+    return plan;
   },
 };
 

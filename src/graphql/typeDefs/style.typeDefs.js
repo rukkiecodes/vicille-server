@@ -62,6 +62,7 @@ const styleTypeDefs = gql`
     styleImageUrl: String
     userImages: [UserImageInput!]
     userImageUrls: [String!]
+    model: String
     folder: String
     tags: [String]
   }

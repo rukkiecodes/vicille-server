@@ -2,7 +2,7 @@ import { GraphQLError } from 'graphql';
 import RatingModel from '../../modules/ratings/rating.model.js';
 import JobModel from '../../modules/jobs/job.model.js';
 import TailorModel from '../../modules/tailors/tailor.model.js';
-import { requireAuth, entityToJSON, entitiesToJSON } from '../helpers.js';
+import { requireAuth, requireTailor, entityToJSON, entitiesToJSON } from '../helpers.js';
 import { query } from '../../infrastructure/database/postgres.js';
 
 const ratingResolvers = {
@@ -64,6 +64,46 @@ const ratingResolvers = {
         stars:     r.overall_rating,
         comment:   r.comments,
         createdAt: r.created_at,
+      };
+    },
+
+    myTailorReviews: async (_, { limit = 20 }, context) => {
+      const authTailor = requireTailor(context);
+      const parsedLimit = Number.isInteger(limit) ? limit : parseInt(limit, 10);
+      const safeLimit = Number.isFinite(parsedLimit)
+        ? Math.min(Math.max(parsedLimit, 1), 50)
+        : 20;
+
+      const { rows: summaryRows } = await query(
+        `SELECT COALESCE(AVG(overall_rating), 0) AS avg_stars,
+                COUNT(*)::int AS total_ratings
+           FROM ratings
+          WHERE tailor_id=$1`,
+        [authTailor.id]
+      );
+
+      const summary = summaryRows[0] || { avg_stars: 0, total_ratings: 0 };
+
+      const { rows: reviewRows } = await query(
+        `SELECT id, job_id, rated_by, overall_rating, comments, created_at
+           FROM ratings
+          WHERE tailor_id=$1
+          ORDER BY created_at DESC
+          LIMIT $2`,
+        [authTailor.id, safeLimit]
+      );
+
+      return {
+        avgStars: parseFloat(summary.avg_stars || 0),
+        totalRatings: parseInt(summary.total_ratings || 0, 10),
+        reviews: reviewRows.map((row) => ({
+          id: row.id,
+          job: row.job_id,
+          reviewerId: row.rated_by,
+          stars: parseFloat(row.overall_rating || 0),
+          comment: row.comments,
+          createdAt: row.created_at,
+        })),
       };
     },
   },

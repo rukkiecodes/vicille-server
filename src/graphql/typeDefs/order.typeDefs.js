@@ -28,6 +28,7 @@ const orderTypeDefs = gql`
     deliveryMethod: String
     trackingNumber: String
     dispatchedAt: DateTime
+    shippedAt: DateTime
     deliveredAt: DateTime
     deliveredBy: String
     deliveryProof: JSON
@@ -168,6 +169,7 @@ const orderTypeDefs = gql`
     cancelOrder(id: ID!, reason: String!): Order!
     updateOrderDelivery(id: ID!, input: OrderDeliveryInput!): Order!
     addOrderItem(orderId: ID!, input: OrderItemInput!): OrderItem!
+    confirmDelivery(id: ID!, input: ConfirmDeliveryInput): Order!
     removeOrderItem(orderId: ID!, itemId: ID!): DeleteResult!
     queueStyleSelection(input: QueueStyleSelectionInput!): QueuedStyleSelection!
     cancelQueuedStyle(id: ID!, reason: String): QueuedStyleSelection!
@@ -204,6 +206,14 @@ const orderTypeDefs = gql`
     trackingNumber: String
     deliveryMethod: String
     deliveryAddress: JSON
+  }
+
+  input ConfirmDeliveryInput {
+    photos: [ProofPhotoInput!]
+    note: String
+    reviewStars: Int
+    reviewComment: String
+    saveTailor: Boolean
   }
 
   input UpdateOrderInput {
