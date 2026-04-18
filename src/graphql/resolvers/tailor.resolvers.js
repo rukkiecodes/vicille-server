@@ -99,6 +99,23 @@ const tailorResolvers = {
       return entityToJSON(updated);
     },
 
+    updateTailorEarningsSettings: async (_, { input }, context) => {
+      const authUser = requireTailor(context);
+      const updated = await TailorModel.findByIdAndUpdate(authUser.id, {
+        expectedEarningPerJob:    input.expectedEarningPerJob,
+        averageJobCompletionDays: input.averageJobCompletionDays,
+        bankName:                 input.bankName,
+        accountNumber:            input.accountNumber,
+        accountName:              input.accountName,
+      });
+      if (!updated) {
+        throw new GraphQLError('Tailor not found', {
+          extensions: { code: 'NOT_FOUND' },
+        });
+      }
+      return entityToJSON(updated);
+    },
+
     updateTailorPaymentDetails: async (_, { input }, context) => {
       const authUser = requireTailor(context);
       const updated = await TailorModel.findByIdAndUpdate(authUser.id, {

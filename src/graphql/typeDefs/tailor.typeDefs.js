@@ -21,6 +21,12 @@ const tailorTypeDefs = gql`
     lastActiveAt: DateTime
     createdAt: DateTime!
     updatedAt: DateTime!
+    expectedEarningPerJob: Float
+    averageJobCompletionDays: Int
+    preferredPaymentMethod: String
+    bankName: String
+    accountNumber: String
+    accountName: String
   }
 
   type Specialty {
@@ -85,6 +91,7 @@ const tailorTypeDefs = gql`
     updateTailorCapacity(input: TailorCapacityInput!): Tailor!
     updateTailorAvailability(input: TailorAvailabilityInput!): Tailor!
     updateTailorPaymentDetails(input: TailorPaymentDetailsInput!): Tailor!
+    updateTailorEarningsSettings(input: UpdateTailorEarningsSettingsInput!): Tailor!
     verifyTailor(id: ID!, score: Float, notes: String): Tailor!
     rejectTailor(id: ID!, reason: String!): Tailor!
     suspendTailor(id: ID!, reason: String!, until: DateTime): Tailor!
@@ -119,6 +126,14 @@ const tailorTypeDefs = gql`
   }
 
   input TailorPaymentDetailsInput {
+    bankName: String!
+    accountNumber: String!
+    accountName: String!
+  }
+
+  input UpdateTailorEarningsSettingsInput {
+    expectedEarningPerJob: Float!
+    averageJobCompletionDays: Int!
     bankName: String!
     accountNumber: String!
     accountName: String!
