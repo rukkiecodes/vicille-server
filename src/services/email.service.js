@@ -294,6 +294,105 @@ const sendReferralSignupEmail = async (referrerEmail, referrerName, newUserName)
   }
 };
 
+// ─── QC submission alert (admin) ──────────────────────────────────────────────
+
+const sendQcSubmissionEmail = async (adminEmail, tailorName, orderNumber, jobId) => {
+  const html = _base(
+    'QC Review Required',
+    'A tailor has submitted a garment for quality check',
+    `<p class="greeting">Hi Admin,</p>
+     <p>A tailor has completed production and submitted garment photos for QC review. Please inspect the proof and approve or request revisions.</p>
+     <span class="pill pill-amber">Awaiting QC</span>
+     <div class="card">
+       ${_row('Tailor', tailorName)}
+       ${_row('Order', orderNumber || '—')}
+       ${_row('Job ID', jobId)}
+       ${_row('Submitted', new Date().toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' }))}
+     </div>
+     <p>Log in to the admin panel to review the photos and make a decision.</p>`
+  );
+
+  const text = `QC Review Required\n\nTailor ${tailorName} has submitted proof for order ${orderNumber || jobId}. Please review and approve or reject via the admin panel.`;
+
+  try {
+    await getTransporter().sendMail({
+      from: config.email.from,
+      to: adminEmail,
+      subject: `QC Review Required — Order ${orderNumber || jobId} (${tailorName})`,
+      html,
+      text,
+    });
+  } catch { /* never block the submission */ }
+};
+
+// ─── QC decision notifications (tailor) ───────────────────────────────────────
+
+const sendQcApprovalEmail = async (tailorEmail, tailorName, orderNumber) => {
+  const firstName = tailorName?.split(' ')[0] ?? 'there';
+
+  const html = _base(
+    'QC Approved',
+    'Your garment passed quality review',
+    `<p class="greeting">Hi ${firstName},</p>
+     <p>Great news — your garment submission for the order below has been reviewed and <strong>approved</strong>.</p>
+     <span class="pill pill-green">QC Approved</span>
+     <div class="card">
+       ${_row('Order', orderNumber || '—')}
+       ${_row('Decision', 'Approved')}
+       ${_row('Date', new Date().toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' }))}
+     </div>
+     <div class="notice notice-green">
+       <strong>What happens next?</strong><br/>
+       The order is now being prepared for delivery. Your payment will be processed as scheduled.
+     </div>
+     <p class="secondary">Thank you for your quality work. Keep it up!</p>`
+  );
+
+  const text = `QC Approved — Order ${orderNumber || '—'}\n\nHi ${firstName},\n\nYour garment submission has been approved. The order is moving to delivery. Thank you!\n\n— The Vicelle Team`;
+
+  try {
+    await getTransporter().sendMail({
+      from: config.email.from,
+      to: tailorEmail,
+      subject: `QC Approved — Order ${orderNumber || '—'}`,
+      html,
+      text,
+    });
+  } catch { /* never block the QC action */ }
+};
+
+const sendQcRejectionEmail = async (tailorEmail, tailorName, orderNumber, reason) => {
+  const firstName = tailorName?.split(' ')[0] ?? 'there';
+
+  const html = _base(
+    'QC Revision Requested',
+    'Your garment submission needs revisions',
+    `<p class="greeting">Hi ${firstName},</p>
+     <p>Your garment submission for the order below has been reviewed. Unfortunately it did not pass quality review and requires revisions before approval.</p>
+     <span class="pill pill-red">Revision Required</span>
+     <div class="card">
+       ${_row('Order', orderNumber || '—')}
+       ${_row('Decision', 'Rejected — Revision Required')}
+       ${_row('Date', new Date().toLocaleDateString('en-NG', { day: 'numeric', month: 'long', year: 'numeric' }))}
+     </div>
+     ${reason ? `<div class="notice notice-red"><strong>Reason:</strong><br/>${reason}</div>` : ''}
+     <p>Please address the feedback above, make the necessary corrections, and resubmit your proof through the Style-U app.</p>
+     <p class="secondary">If you have questions, please reach out to us.</p>`
+  );
+
+  const text = `QC Revision Requested — Order ${orderNumber || '—'}\n\nHi ${firstName},\n\nYour submission was rejected.\n${reason ? `Reason: ${reason}\n` : ''}Please revise and resubmit.\n\n— The Vicelle Team`;
+
+  try {
+    await getTransporter().sendMail({
+      from: config.email.from,
+      to: tailorEmail,
+      subject: `QC Revision Required — Order ${orderNumber || '—'}`,
+      html,
+      text,
+    });
+  } catch { /* never block the QC action */ }
+};
+
 // ─── Generic ───────────────────────────────────────────────────────────────────
 
 const sendEmail = async (email, subject, htmlContent, textContent) => {
@@ -318,6 +417,9 @@ export default {
   sendOrderConfirmationEmail,
   sendPaymentConfirmationEmail,
   sendAdminJobResponseEmail,
+  sendQcSubmissionEmail,
+  sendQcApprovalEmail,
+  sendQcRejectionEmail,
   sendReferralSignupEmail,
   sendEmail,
   getTransporter,

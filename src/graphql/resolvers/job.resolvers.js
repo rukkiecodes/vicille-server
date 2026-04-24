@@ -407,6 +407,20 @@ const jobResolvers = {
         revisionNotes: null,
       });
 
+      // Notify Vicelle admin that a QC review is waiting
+      ;(async () => {
+        try {
+          const order = job.order ? await OrderModel.findById(job.order) : null;
+          const tailor = await TailorModel.findById(authUser.id);
+          await emailService.sendQcSubmissionEmail(
+            ADMIN_EMAIL,
+            tailor?.fullName || 'Tailor',
+            order?.orderNumber || job.order || id,
+            id,
+          );
+        } catch { /* never block */ }
+      })();
+
       return entityToJSON(updated);
     },
 
@@ -450,21 +464,43 @@ const jobResolvers = {
         throw new GraphQLError('Failed to update job', { extensions: { code: 'INTERNAL_SERVER_ERROR' } });
       }
 
-      // Once QC is approved, advance the linked order into a delivery-ready stage.
+      // Once QC is approved, advance the linked order.
+      // If the customer has paid in full (outstandingBalance === 0) go straight to delivery;
+      // otherwise hold at payment-required so they can settle the balance first.
       if (job.order) {
         const linkedOrder = await OrderModel.findByIdFresh(job.order);
         if (linkedOrder?.status === ORDER_STATUS.PRODUCTION_IN_PROGRESS) {
+          const fullyPaid = Number(linkedOrder.outstandingBalance ?? 0) <= 0;
+          const nextStatus = fullyPaid
+            ? ORDER_STATUS.PACKAGE_READY_DELIVERY_IN_PROGRESS
+            : ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED;
+          const noteText = fullyPaid
+            ? 'QC approved — fully paid, order moved to delivery in progress'
+            : 'QC approved — awaiting balance payment before delivery';
           await OrderModel.updateStatus(
             linkedOrder.id,
-            ORDER_STATUS.PACKAGE_READY_PAYMENT_REQUIRED,
+            nextStatus,
             authUser.id,
             role,
-            role === 'admin'
-              ? 'QC approved — order moved to package ready'
-              : 'QC approved by client — order moved to package ready'
+            role === 'admin' ? noteText : noteText.replace('QC approved', 'QC approved by client'),
           );
         }
       }
+
+      // Notify the tailor that their submission was approved
+      ;(async () => {
+        try {
+          const tailor = await TailorModel.findById(job.tailor);
+          if (tailor?.email) {
+            const order = job.order ? await OrderModel.findById(job.order) : null;
+            await emailService.sendQcApprovalEmail(
+              tailor.email,
+              tailor.fullName || 'Tailor',
+              order?.orderNumber || job.order || job.id,
+            );
+          }
+        } catch { /* never block */ }
+      })();
 
       return entityToJSON(updated);
     },
@@ -508,6 +544,22 @@ const jobResolvers = {
       if (!updated) {
         throw new GraphQLError('Failed to update job', { extensions: { code: 'INTERNAL_SERVER_ERROR' } });
       }
+
+      // Notify the tailor that their submission was rejected and what needs fixing
+      ;(async () => {
+        try {
+          const tailor = await TailorModel.findById(job.tailor);
+          if (tailor?.email) {
+            const order = job.order ? await OrderModel.findById(job.order) : null;
+            await emailService.sendQcRejectionEmail(
+              tailor.email,
+              tailor.fullName || 'Tailor',
+              order?.orderNumber || job.order || job.id,
+              reason,
+            );
+          }
+        } catch { /* never block */ }
+      })();
 
       return entityToJSON(updated);
     },
