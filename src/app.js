@@ -26,23 +26,14 @@ app.use(
   })
 );
 
-// CORS — allow whitelisted origins + any localhost (any port) for local dev
-const allowedOrigins = new Set(config.cors.origins);
+// CORS — open to all origins; auth is enforced per-resolver
 app.use(
   cors({
-    origin: (origin, cb) => {
-      // No origin = mobile app, curl, server-to-server — always allow
-      if (!origin) return cb(null, true);
-      // Any localhost port — always allow (dev/admin/tools)
-      if (origin.includes('localhost') || origin.includes('127.0.0.1')) return cb(null, true);
-      // Explicit whitelist
-      if (allowedOrigins.has(origin)) return cb(null, true);
-      cb(new Error(`CORS: origin '${origin}' not allowed`));
-    },
+    origin: true,
     credentials: config.cors.credentials,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-    optionsSuccessStatus: 200,   // some browsers (IE11) choke on 204
+    optionsSuccessStatus: 200,
   })
 );
 
