@@ -50,6 +50,7 @@ const authTypeDefs = gql`
     email: String!
     phone: String!
     password: String!
+    tailorType: String
     specialties: [SpecialtyInput!]
   }
 

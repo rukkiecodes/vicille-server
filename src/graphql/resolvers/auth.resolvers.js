@@ -234,6 +234,7 @@ const authResolvers = {
           email:       input.email,
           phone:       input.phone,
           password:    input.password,
+          tailorType:  input.tailorType || 'vicelle',
           specialties: input.specialties || [],
           status:      'pending',
         });

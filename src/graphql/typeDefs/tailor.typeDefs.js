@@ -14,6 +14,7 @@ const tailorTypeDefs = gql`
     performance: TailorPerformance
     paymentDetails: TailorPaymentDetails
     availability: TailorAvailability
+    tailorType: String!
     accountStatus: String!
     completionRate: Int
     isVerified: Boolean

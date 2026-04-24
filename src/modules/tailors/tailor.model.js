@@ -64,6 +64,7 @@ function format(row) {
     resetTokenExpiresAt:     row.reset_token_expires_at,
     lastActiveAt:            row.last_login_at,
     lastLoginAt:             row.last_login_at,
+    tailorType:              row.tailor_type || 'vicelle',
     isDeleted:               row.is_deleted,
     createdAt:               row.created_at,
     updatedAt:               row.updated_at,
@@ -126,6 +127,7 @@ const colMap = {
   isOnProbation:          'is_on_probation',
   probationJobsCompleted: 'probation_jobs_completed',
   advanceEligible:        'advance_eligible',
+  tailorType:             'tailor_type',
   lastLoginAt:            'last_login_at',
   lastActiveAt:           'last_login_at',
   resetToken:             'reset_token',
@@ -137,9 +139,10 @@ const colMap = {
 const TailorModel = {
   async create(data) {
     const passwordHash = data.password ? await hashPassword(data.password) : null;
+    const tailorType = data.tailorType === 'styleu' ? 'styleu' : 'vicelle';
     const { rows } = await query(
-      `INSERT INTO tailors (full_name,email,phone,password_hash,status,specialties)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING *`,
+      `INSERT INTO tailors (full_name,email,phone,password_hash,status,specialties,tailor_type)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
       [
         data.fullName,
         data.email?.toLowerCase(),
@@ -147,6 +150,7 @@ const TailorModel = {
         passwordHash,
         data.status || 'pending',
         data.specialties || [],
+        tailorType,
       ]
     );
     logger.info(`Tailor created: ${rows[0].email}`);
