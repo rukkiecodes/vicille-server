@@ -1,9 +1,11 @@
 import { GraphQLError } from 'graphql';
 import StyleModel from '../../modules/styles/style.model.js';
+import SuggestedStyleModel from '../../modules/styles/suggested-style.model.js';
 import StyleSearchService from '../../services/styleSearch.service.js';
 import logger from '../../core/logger/index.js';
 import { requireAuth } from '../helpers.js';
 import { getRedisClient } from '../../infrastructure/database/redis.js';
+import { enrichStyle } from '../../core/utils/style-enricher.js';
 
 const IMAGE_GENERATION_SERVICE_URL =
   process.env.IMAGE_GENERATION_SERVICE_URL || 'http://localhost:8090';
@@ -75,6 +77,10 @@ const styleResolvers = {
         });
       }
     },
+
+    suggestedStyle: async (_, { id }) => {
+      return SuggestedStyleModel.findById(id);
+    },
   },
 
   Mutation: {
@@ -91,19 +97,26 @@ const styleResolvers = {
       return true;
     },
 
-    saveSearchResultAsStyle: async (_, { input }, context) => {
-      const { imageUrl, thumbnail, sourceUrl, searchQuery, ...rest } = input;
-      return StyleModel.create({
-        ...rest,
-        source: 'search',
-        searchQuery: searchQuery || null,
-        images: [{
-          url: imageUrl,
-          thumbnail: thumbnail || imageUrl,
-          sourceUrl: sourceUrl || null,
-          isPrimary: true,
-        }],
-        createdBy: context.user?.id ?? null,
+    saveSuggestedStyle: async (_, { input }, context) => {
+      const { imageUrl, thumbnailUrl, sourceUrl, searchQuery, ...rest } = input;
+
+      // Enrich with AI-generated name, description, category, and tags
+      const enriched = await enrichStyle({
+        imageUrl,
+        title: rest.name,
+        searchQuery,
+      });
+
+      return SuggestedStyleModel.create({
+        name:         enriched?.name        ?? rest.name,
+        description:  enriched?.description ?? rest.description ?? null,
+        category:     enriched?.category    ?? rest.category    ?? null,
+        tags:         enriched?.tags?.length ? enriched.tags : (rest.tags ?? []),
+        imageUrl,
+        thumbnailUrl: thumbnailUrl || imageUrl,
+        sourceUrl:    sourceUrl || null,
+        searchQuery:  searchQuery || null,
+        userId:       context.user?.id ?? null,
       });
     },
 

@@ -67,19 +67,33 @@ const styleTypeDefs = gql`
     tags: [String]
   }
 
+  type SuggestedStyle {
+    id: ID!
+    name: String!
+    description: String
+    category: String
+    imageUrl: String!
+    thumbnailUrl: String
+    sourceUrl: String
+    searchQuery: String
+    tags: [String]
+    createdAt: DateTime
+  }
+
   extend type Query {
     style(id: ID!): Style
     styleBySlug(slug: String!): Style
     styles(category: String, isActive: Boolean, limit: Int, offset: Int): [Style!]!
     searchStyles(query: String!, limit: Int): [Style!]!
     webSearchStyles(query: String!, limit: Int): WebStyleSearchResponse!
+    suggestedStyle(id: ID!): SuggestedStyle
   }
 
   extend type Mutation {
     createStyle(input: CreateStyleInput!): Style!
     updateStyle(id: ID!, input: UpdateStyleInput!): Style
     deleteStyle(id: ID!): Boolean!
-    saveSearchResultAsStyle(input: SaveStyleFromSearchInput!): Style!
+    saveSuggestedStyle(input: SaveSuggestedStyleInput!): SuggestedStyle!
     generateStyleTryOn(input: StyleTryOnInput!): StyleTryOnResult!
   }
 
@@ -103,14 +117,13 @@ const styleTypeDefs = gql`
     isActive: Boolean
   }
 
-  input SaveStyleFromSearchInput {
+  input SaveSuggestedStyleInput {
     name: String!
     description: String
     category: String
     imageUrl: String!
-    thumbnail: String
+    thumbnailUrl: String
     sourceUrl: String
-    keywords: [String]
     tags: [String]
     searchQuery: String
   }
