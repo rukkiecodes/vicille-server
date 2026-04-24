@@ -51,3 +51,4 @@ logs/*
 !logs/.gitkeep
 
 .vercel
+.env.production.verify

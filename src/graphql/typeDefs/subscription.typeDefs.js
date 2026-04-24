@@ -26,6 +26,8 @@ const subscriptionTypeDefs = gql`
   }
 
   type SubscriptionFeatures {
+    fitsPerCycle: Int
+    itemsPerFit: Int
     itemsPerCycle: Int
     fabricOptions: [String!]
     styleConsultation: Boolean
@@ -61,6 +63,8 @@ const subscriptionTypeDefs = gql`
     # Resolved fields
     planDetails: SubscriptionPlan
     userDetails: User
+    fitsUsedThisCycle: Int!
+    fitsRemainingThisCycle: Int!
   }
 
   # Returned by initializeCardSubscription — open authorizationUrl in browser to complete payment.
@@ -166,6 +170,8 @@ const subscriptionTypeDefs = gql`
   }
 
   input SubscriptionFeaturesInput {
+    fitsPerCycle: Int
+    itemsPerFit: Int
     itemsPerCycle: Int
     fabricOptions: [String!]
     styleConsultation: Boolean

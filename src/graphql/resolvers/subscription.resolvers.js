@@ -2,6 +2,7 @@ import { GraphQLError } from 'graphql';
 import SubscriptionPlanModel from '../../modules/subscriptions/subscriptionPlan.model.js';
 import SubscriptionModel from '../../modules/subscriptions/subscription.model.js';
 import UserModel from '../../modules/users/user.model.js';
+import OrderModel from '../../modules/orders/order.model.js';
 import { requireAuth, requireAdmin, buildPaginatedResponse, entityToJSON, entitiesToJSON } from '../helpers.js';
 import paymentsService from '../../services/paymentsService.js';
 import logger from '../../core/logger/index.js';
@@ -26,6 +27,46 @@ const subscriptionResolvers = {
       } catch (error) {
         logger.error('Error resolving subscription.userDetails:', error);
         return null;
+      }
+    },
+    fitsUsedThisCycle: async (subscription) => {
+      try {
+        const cycleStart = subscription.billing?.lastBillingDate
+          ? new Date(subscription.billing.lastBillingDate)
+          : new Date(subscription.startDate || 0);
+        const result = await OrderModel.find({
+          userId: subscription.user,
+          subscriptionId: subscription.id,
+        }, { limit: 1000 });
+        const orders = result.data || [];
+        const used = orders.filter(o =>
+          o.status !== 'cancelled' &&
+          new Date(o.createdAt) >= cycleStart
+        ).length;
+        return used;
+      } catch {
+        return 0;
+      }
+    },
+    fitsRemainingThisCycle: async (subscription) => {
+      try {
+        const plan = await SubscriptionPlanModel.findById(subscription.plan);
+        const fitsPerCycle = plan?.features?.fitsPerCycle ?? 0;
+        const cycleStart = subscription.billing?.lastBillingDate
+          ? new Date(subscription.billing.lastBillingDate)
+          : new Date(subscription.startDate || 0);
+        const result = await OrderModel.find({
+          userId: subscription.user,
+          subscriptionId: subscription.id,
+        }, { limit: 1000 });
+        const orders = result.data || [];
+        const used = orders.filter(o =>
+          o.status !== 'cancelled' &&
+          new Date(o.createdAt) >= cycleStart
+        ).length;
+        return Math.max(0, fitsPerCycle - used);
+      } catch {
+        return 0;
       }
     },
   },

@@ -325,10 +325,11 @@ const OrderModel = {
     const conds = ['TRUE'];
     const vals = [];
     let i = 1;
-    if (filters.status)    { conds.push(`status=$${i++}`);    vals.push(filters.status); }
-    if (filters.orderType) { conds.push(`order_type=$${i++}`); vals.push(filters.orderType); }
-    if (filters.user)      { conds.push(`user_id=$${i++}`);   vals.push(filters.user); }
-    if (filters.userId)    { conds.push(`user_id=$${i++}`);   vals.push(filters.userId); }
+    if (filters.status)         { conds.push(`status=$${i++}`);          vals.push(filters.status); }
+    if (filters.orderType)      { conds.push(`order_type=$${i++}`);       vals.push(filters.orderType); }
+    if (filters.user)           { conds.push(`user_id=$${i++}`);          vals.push(filters.user); }
+    if (filters.userId)         { conds.push(`user_id=$${i++}`);          vals.push(filters.userId); }
+    if (filters.subscriptionId) { conds.push(`subscription_id=$${i++}`); vals.push(filters.subscriptionId); }
     const total = parseInt(
       (await query(`SELECT COUNT(*) AS cnt FROM orders WHERE ${conds.join(' AND ')}`, vals)).rows[0].cnt, 10
     );
@@ -346,9 +347,10 @@ const OrderModel = {
     const conds = ['TRUE'];
     const vals = [];
     let i = 1;
-    if (filters.status)    { conds.push(`status=$${i++}`);    vals.push(filters.status); }
-    if (filters.orderType) { conds.push(`order_type=$${i++}`); vals.push(filters.orderType); }
-    if (filters.user)      { conds.push(`user_id=$${i++}`);   vals.push(filters.user); }
+    if (filters.status)         { conds.push(`status=$${i++}`);          vals.push(filters.status); }
+    if (filters.orderType)      { conds.push(`order_type=$${i++}`);       vals.push(filters.orderType); }
+    if (filters.user)           { conds.push(`user_id=$${i++}`);          vals.push(filters.user); }
+    if (filters.subscriptionId) { conds.push(`subscription_id=$${i++}`); vals.push(filters.subscriptionId); }
     const { rows } = await query(
       `SELECT COUNT(*) AS cnt FROM orders WHERE ${conds.join(' AND ')}`, vals
     );
