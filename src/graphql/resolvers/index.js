@@ -12,6 +12,7 @@ import styleResolvers from './style.resolvers.js';
 import referralResolvers from './referral.resolvers.js';
 import ratingResolvers from './rating.resolvers.js';
 import walletResolvers from './wallet.resolvers.js';
+import stitchdResolvers from './stitchd.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -28,6 +29,7 @@ const resolvers = [
   referralResolvers,
   ratingResolvers,
   walletResolvers,
+  stitchdResolvers,
 ];
 
 export default resolvers;

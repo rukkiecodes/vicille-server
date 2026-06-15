@@ -13,6 +13,7 @@ import styleTypeDefs from './style.typeDefs.js';
 import referralTypeDefs from './referral.typeDefs.js';
 import ratingTypeDefs from './rating.typeDefs.js';
 import walletTypeDefs from './wallet.typeDefs.js';
+import stitchdTypeDefs from './stitchd.typeDefs.js';
 
 // Base type definitions with root Query and Mutation types
 const baseTypeDefs = gql`
@@ -41,6 +42,7 @@ const typeDefs = [
   referralTypeDefs,
   ratingTypeDefs,
   walletTypeDefs,
+  stitchdTypeDefs,
 ];
 
 export default typeDefs;
