@@ -1,6 +1,6 @@
 /**
  * Usage (run from the server/ directory):
- *   node migrations/run-038.js
+ *   node migrations/run-045.js
  */
 import pg from 'pg';
 import dotenv from 'dotenv';
@@ -12,7 +12,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: path.resolve(__dirname, '../.env') });
 
 const sql = fs.readFileSync(
-  path.join(__dirname, '038_stitchd_tailor_profile.sql'),
+  path.join(__dirname, '045_stitchd_phone_otps.sql'),
   'utf8'
 );
 
@@ -29,9 +29,9 @@ const pool = new pg.Pool({
 (async () => {
   const client = await pool.connect();
   try {
-    console.log('Running migration 038_stitchd_tailor_profile …');
+    console.log('Running migration 045_stitchd_phone_otps …');
     await client.query(sql);
-    console.log('✅  Migration complete — stitchd_tailor_profile table created and tailor_type CHECK widened to include "stitchd".');
+    console.log('✅  Migration complete — stitchd_phone_otps table created.');
   } catch (err) {
     console.error('❌  Migration failed:', err.message);
     process.exitCode = 1;
