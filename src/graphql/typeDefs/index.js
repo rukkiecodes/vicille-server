@@ -15,6 +15,7 @@ import ratingTypeDefs from './rating.typeDefs.js';
 import walletTypeDefs from './wallet.typeDefs.js';
 import stitchdTypeDefs from './stitchd.typeDefs.js';
 import stitchdAuthTypeDefs from './stitchdAuth.typeDefs.js';
+import stitchdCustomerTypeDefs from './stitchdCustomer.typeDefs.js';
 
 // Base type definitions with root Query and Mutation types
 const baseTypeDefs = gql`
@@ -45,6 +46,7 @@ const typeDefs = [
   walletTypeDefs,
   stitchdTypeDefs,
   stitchdAuthTypeDefs,
+  stitchdCustomerTypeDefs,
 ];
 
 export default typeDefs;

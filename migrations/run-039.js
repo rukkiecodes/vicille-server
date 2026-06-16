@@ -31,7 +31,7 @@ const pool = new pg.Pool({
   try {
     console.log('Running migration 039_stitchd_customers …');
     await client.query(sql);
-    console.log('✅  Migration complete — 039_stitchd_customers stub applied (no-op; table bodies land in batch 01).');
+    console.log('✅  Migration complete — stitchd_customers + stitchd_customer_tags created (batch 02).');
   } catch (err) {
     console.error('❌  Migration failed:', err.message);
     process.exitCode = 1;
