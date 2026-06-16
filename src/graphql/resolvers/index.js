@@ -15,6 +15,7 @@ import walletResolvers from './wallet.resolvers.js';
 import stitchdResolvers from './stitchd.resolvers.js';
 import stitchdAuthResolvers from './stitchdAuth.resolvers.js';
 import stitchdCustomerResolvers from './stitchdCustomer.resolvers.js';
+import stitchdMeasurementResolvers from './stitchdMeasurement.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -34,6 +35,7 @@ const resolvers = [
   stitchdResolvers,
   stitchdAuthResolvers,
   stitchdCustomerResolvers,
+  stitchdMeasurementResolvers,
 ];
 
 export default resolvers;
