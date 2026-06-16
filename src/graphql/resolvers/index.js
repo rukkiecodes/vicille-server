@@ -18,6 +18,7 @@ import stitchdCustomerResolvers from './stitchdCustomer.resolvers.js';
 import stitchdMeasurementResolvers from './stitchdMeasurement.resolvers.js';
 import stitchdOrderResolvers from './stitchdOrder.resolvers.js';
 import stitchdPaymentResolvers from './stitchdPayment.resolvers.js';
+import stitchdThreadResolvers from './stitchdThread.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -40,6 +41,7 @@ const resolvers = [
   stitchdMeasurementResolvers,
   stitchdOrderResolvers,
   stitchdPaymentResolvers,
+  stitchdThreadResolvers,
 ];
 
 export default resolvers;
