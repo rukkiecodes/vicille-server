@@ -187,6 +187,19 @@ const StitchdOrderModel = {
         );
       }
 
+      // Deposit captured at creation is recorded as a cash payment so balances and
+      // payment history have a single source of truth (the balance trigger then
+      // recomputes deposit_paid/balance_owed from payments — batch 05).
+      if (deposit > 0) {
+        await client.query(
+          `INSERT INTO stitchd_payments
+             (client_uuid, tailor_id, customer_id, order_id, type, amount, currency, method, note)
+           VALUES (gen_random_uuid(), $1, $2, $3, 'cash_recorded', $4, 'NGN', 'cash', 'Deposit at order creation')`,
+          [tailorId, input.customerId, order.id, deposit]
+        );
+        await this.logActivity(client, tailorId, order.id, { kind: 'payment', meta: { amount: deposit, deposit: true } });
+      }
+
       await this.logActivity(client, tailorId, order.id, {
         kind: 'created', toStatus: 'New', meta: { orderNumber, total },
       });
