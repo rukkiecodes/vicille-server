@@ -19,6 +19,15 @@ import { query } from '../../infrastructure/database/postgres.js';
  */
 const CAPS = {
   transcription: { starter: 30, pro: 500, enterprise: Infinity },
+  // AI Fit Consultant text queries (batch 07). Kept low on starter so AI cost never
+  // outruns subscription revenue (spec §12); upgrade-selling lands in batch 11.
+  fit_consultant: { starter: 20, pro: 300, enterprise: Infinity },
+};
+
+/** Human label per feature for cap-reached messaging. */
+const LABELS = {
+  transcription: 'voice transcription',
+  fit_consultant: 'AI Fit Consultant',
 };
 
 /** Calendar-month bucket 'YYYY-MM' (UTC) the usage counts against. */
@@ -60,8 +69,9 @@ const StitchdAiUsageModel = {
     const period = currentPeriod();
     const used = await this.usedThisPeriod(tailorId, feature, period);
     if (used >= cap) {
+      const label = LABELS[feature] || 'AI';
       throw new GraphQLError(
-        "You've reached this month's voice transcription limit for your plan.",
+        `You've reached this month's ${label} limit for your plan.`,
         { extensions: { code: 'FORBIDDEN', reason: 'AI_CAP_REACHED', feature, cap, used } }
       );
     }
