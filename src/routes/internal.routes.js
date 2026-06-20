@@ -9,6 +9,7 @@ import UserModel from '../modules/users/user.model.js';
 import WalletModel from '../modules/wallet/wallet.model.js';
 import WalletTransactionModel from '../modules/wallet/walletTransaction.model.js';
 import SavedCardModel from '../modules/wallet/savedCard.model.js';
+import StitchdPaymentModel from '../modules/stitchd/stitchdPayment.model.js';
 import ReferralModel from '../modules/referrals/referral.model.js';
 import AffiliateModel from '../modules/affiliates/affiliate.model.js';
 import { query } from '../infrastructure/database/postgres.js';
@@ -507,6 +508,41 @@ router.post('/subscription-event', async (req, res) => {
           paystackId:    paystackId || null,
         });
         logger.info('[internal] DVA assigned to wallet', { userId: user.id, accountNumber });
+        break;
+      }
+
+      // ── Stitchd in-app collection succeeded (charge.success, metadata.purpose) ──
+      // Idempotent on provider_reference; the balance trigger recomputes the order.
+      case 'STITCHD_PAYMENT_COLLECTED': {
+        const { providerReference, channel, paidAt, amountKobo } = req.body;
+        if (!providerReference) break;
+        const payment = await StitchdPaymentModel.recordCollectionSuccess({
+          providerReference,
+          channel: channel || null,
+          paidAt: paidAt || null,
+        });
+        if (payment) {
+          logger.info('[internal] stitchd payment collected', {
+            paymentId: payment.id, orderId: payment.orderId, amount: payment.amount, amountKobo,
+          });
+          // FCM push to the tailor ("X paid ₦Y for order #Z") is batch-09 deferred —
+          // the app confirms via stitchdPaymentStatus polling (source of truth).
+        } else {
+          logger.warn('[internal] STITCHD_PAYMENT_COLLECTED — no payment for reference:', providerReference);
+        }
+        break;
+      }
+
+      // ── Stitchd in-app collection failed/abandoned ───────────────────────────
+      case 'STITCHD_PAYMENT_FAILED': {
+        const { providerReference, reason, abandoned } = req.body;
+        if (!providerReference) break;
+        await StitchdPaymentModel.recordCollectionFailure({
+          providerReference,
+          reason: reason || null,
+          kind: abandoned ? 'abandoned' : 'failed',
+        });
+        logger.warn('[internal] stitchd payment failed', { providerReference, reason });
         break;
       }
 

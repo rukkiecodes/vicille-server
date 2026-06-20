@@ -110,6 +110,13 @@ const paymentsService = {
     return req('POST', '/wallet/topup/charge', { authorizationCode, email, userId, amountKobo });
     // Returns: { ok, reference, status }
   },
+
+  // ── Stitchd in-app collection (batch 09) ─────────────────────────────────────
+
+  async initiateStitchdCollection({ email, amountKobo, channel, reference, callbackUrl, metadata }) {
+    return req('POST', '/stitchd/collect', { email, amountKobo, channel, reference, callbackUrl: callbackUrl || null, metadata });
+    // Returns: { ok, authorizationUrl, reference, ussdCode? }
+  },
 };
 
 export default paymentsService;

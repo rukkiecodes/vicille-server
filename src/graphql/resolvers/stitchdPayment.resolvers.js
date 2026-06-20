@@ -39,6 +39,13 @@ const stitchdPaymentResolvers = {
         return await StitchdPaymentModel.moneyDashboard(tailorId, weekStart || null);
       } catch (e) { throw wrap(e, 'Could not load the money dashboard'); }
     },
+
+    stitchdPaymentStatus: async (_p, { reference }, context) => {
+      const tailorId = requireTailor(context);
+      try {
+        return await StitchdPaymentModel.collectionStatus(tailorId, reference);
+      } catch (e) { throw wrap(e, 'Could not check the payment'); }
+    },
   },
 
   Mutation: {
@@ -47,6 +54,20 @@ const stitchdPaymentResolvers = {
       try {
         return await StitchdPaymentModel.recordCash(tailorId, input);
       } catch (e) { throw wrap(e, 'Could not record the payment'); }
+    },
+
+    initiateStitchdPaymentCollection: async (_p, { input }, context) => {
+      const tailorId = requireTailor(context);
+      try {
+        return await StitchdPaymentModel.initiateCollection(tailorId, input);
+      } catch (e) { throw wrap(e, 'Could not start the payment'); }
+    },
+
+    retryStitchdPayment: async (_p, { id }, context) => {
+      const tailorId = requireTailor(context);
+      try {
+        return await StitchdPaymentModel.retryCollection(tailorId, id);
+      } catch (e) { throw wrap(e, 'Could not retry the payment'); }
     },
   },
 };
