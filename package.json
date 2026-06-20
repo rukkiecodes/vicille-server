@@ -10,6 +10,8 @@
     "build": "echo 'No build step required'",
     "migrate": "node migrations/seed.js",
     "migrate:all": "node migrations/seed.js",
+    "db:migrate": "node migrations/migrate.js",
+    "db:migrate:list": "node migrations/migrate.js --list",
     "migrate:012": "node migrations/run-012.js",
     "migrate:013": "node migrations/run-013.js",
     "migrate:014": "node migrations/run-014.js",
