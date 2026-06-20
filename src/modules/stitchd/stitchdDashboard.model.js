@@ -32,7 +32,7 @@ const StitchdDashboardModel = {
       // Orders due inside this week that are still open.
       query(
         `SELECT COUNT(*)::int AS n FROM stitchd_orders
-          WHERE tailor_id=$1 AND due_date >= $2::date AND due_date < $3::date
+          WHERE tailor_id=$1 AND deleted_at IS NULL AND due_date >= $2::date AND due_date < $3::date
             AND status NOT IN ('Delivered','Closed')`,
         [tailorId, weekStartDate, weekEndDate]
       ),
@@ -40,7 +40,7 @@ const StitchdDashboardModel = {
       query(
         `SELECT COALESCE(SUM(balance_owed),0) AS total,
                 COUNT(DISTINCT customer_id) FILTER (WHERE balance_owed > 0) AS customers
-           FROM stitchd_orders WHERE tailor_id=$1 AND balance_owed > 0`,
+           FROM stitchd_orders WHERE tailor_id=$1 AND balance_owed > 0 AND deleted_at IS NULL`,
         [tailorId]
       ),
       // This-week paid — identical clause to StitchdPaymentModel.moneyDashboard.
@@ -52,7 +52,7 @@ const StitchdDashboardModel = {
       // This-week pending — identical clause to moneyDashboard.
       query(
         `SELECT COALESCE(SUM(balance_owed),0) AS v FROM stitchd_orders
-          WHERE tailor_id=$1 AND due_date >= $2::date AND due_date < $3::date
+          WHERE tailor_id=$1 AND deleted_at IS NULL AND due_date >= $2::date AND due_date < $3::date
             AND status NOT IN ('Closed')`,
         [tailorId, weekStartDate, weekEndDate]
       ),
@@ -71,7 +71,7 @@ const StitchdDashboardModel = {
                   o.id::text AS order_id, c.name AS label, o.order_number::text AS ref,
                   NULL::numeric AS amount, o.created_at AS ts
              FROM stitchd_orders o JOIN stitchd_customers c ON c.id = o.customer_id
-            WHERE o.tailor_id=$1
+            WHERE o.tailor_id=$1 AND o.deleted_at IS NULL
          )
          UNION ALL
          (

@@ -22,6 +22,8 @@ import stitchdPaymentTypeDefs from './stitchdPayment.typeDefs.js';
 import stitchdThreadTypeDefs from './stitchdThread.typeDefs.js';
 import stitchdDashboardTypeDefs from './stitchdDashboard.typeDefs.js';
 import stitchdAiTypeDefs from './stitchdAi.typeDefs.js';
+import stitchdSyncTypeDefs from './stitchdSync.typeDefs.js';
+import stitchdTelemetryTypeDefs from './stitchdTelemetry.typeDefs.js';
 
 // Base type definitions with root Query and Mutation types
 const baseTypeDefs = gql`
@@ -59,6 +61,8 @@ const typeDefs = [
   stitchdThreadTypeDefs,
   stitchdDashboardTypeDefs,
   stitchdAiTypeDefs,
+  stitchdSyncTypeDefs,
+  stitchdTelemetryTypeDefs,
 ];
 
 export default typeDefs;

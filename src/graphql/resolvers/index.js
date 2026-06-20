@@ -21,6 +21,8 @@ import stitchdPaymentResolvers from './stitchdPayment.resolvers.js';
 import stitchdThreadResolvers from './stitchdThread.resolvers.js';
 import stitchdDashboardResolvers from './stitchdDashboard.resolvers.js';
 import stitchdAiResolvers from './stitchdAi.resolvers.js';
+import stitchdSyncResolvers from './stitchdSync.resolvers.js';
+import stitchdTelemetryResolvers from './stitchdTelemetry.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -46,6 +48,8 @@ const resolvers = [
   stitchdThreadResolvers,
   stitchdDashboardResolvers,
   stitchdAiResolvers,
+  stitchdSyncResolvers,
+  stitchdTelemetryResolvers,
 ];
 
 export default resolvers;

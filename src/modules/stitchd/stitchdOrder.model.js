@@ -216,7 +216,7 @@ const StitchdOrderModel = {
 
   /** Queue list: tenant-scoped, filtered/sorted, with customer name + item count. */
   async list(tailorId, opts = {}) {
-    const where = ['o.tailor_id = $1'];
+    const where = ['o.tailor_id = $1', 'o.deleted_at IS NULL'];
     const vals = [tailorId];
     const filter = opts.filter || 'ALL';
     if (filter === 'NEW') where.push(`o.status = 'New'`);
@@ -249,7 +249,7 @@ const StitchdOrderModel = {
               (SELECT COUNT(*) FROM stitchd_order_items i WHERE i.order_id = o.id) AS item_count
          FROM stitchd_orders o
          JOIN stitchd_customers c ON c.id = o.customer_id
-        WHERE o.tailor_id = $1 AND o.due_date BETWEEN $2 AND $3
+        WHERE o.tailor_id = $1 AND o.deleted_at IS NULL AND o.due_date BETWEEN $2 AND $3
         ORDER BY o.due_date ASC`,
       [tailorId, start, end]
     );
@@ -262,7 +262,7 @@ const StitchdOrderModel = {
       `SELECT o.*, c.name AS customer_name
          FROM stitchd_orders o
          JOIN stitchd_customers c ON c.id = o.customer_id
-        WHERE o.tailor_id = $1 AND o.id = $2`,
+        WHERE o.tailor_id = $1 AND o.id = $2 AND o.deleted_at IS NULL`,
       [tailorId, id]
     );
     if (!rows[0]) return null;
@@ -275,7 +275,7 @@ const StitchdOrderModel = {
 
   /** Raw order row (tenant-scoped) — internal helper. */
   async _row(tailorId, id) {
-    const { rows } = await query('SELECT * FROM stitchd_orders WHERE tailor_id=$1 AND id=$2', [tailorId, id]);
+    const { rows } = await query('SELECT * FROM stitchd_orders WHERE tailor_id=$1 AND id=$2 AND deleted_at IS NULL', [tailorId, id]);
     return rows[0] || null;
   },
 
@@ -378,8 +378,15 @@ const StitchdOrderModel = {
     }
   },
 
+  /**
+   * Soft-delete (tombstone) so the delete propagates to other devices on sync (batch 08).
+   * Idempotent: re-deleting an already-tombstoned order is a no-op.
+   */
   async remove(tailorId, id) {
-    const { rowCount } = await query('DELETE FROM stitchd_orders WHERE tailor_id=$1 AND id=$2', [tailorId, id]);
+    const { rowCount } = await query(
+      'UPDATE stitchd_orders SET deleted_at=now(), updated_at=now() WHERE tailor_id=$1 AND id=$2 AND deleted_at IS NULL',
+      [tailorId, id]
+    );
     return rowCount > 0;
   },
 

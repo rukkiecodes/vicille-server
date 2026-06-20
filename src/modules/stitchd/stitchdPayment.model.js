@@ -119,7 +119,7 @@ const StitchdPaymentModel = {
               MIN(o.created_on)  AS oldest_unpaid,
               COUNT(*)           AS open_count
          FROM stitchd_orders o JOIN stitchd_customers c ON c.id = o.customer_id
-        WHERE o.tailor_id=$1 AND o.balance_owed > 0
+        WHERE o.tailor_id=$1 AND o.balance_owed > 0 AND o.deleted_at IS NULL
         GROUP BY c.id, c.name, c.phone, c.profile_photo
         ORDER BY ${orderBy}`,
       [tailorId]
@@ -148,14 +148,14 @@ const StitchdPaymentModel = {
       ),
       query(
         `SELECT COALESCE(SUM(balance_owed),0) AS v FROM stitchd_orders
-          WHERE tailor_id=$1 AND due_date >= $2::date AND due_date < $3::date
+          WHERE tailor_id=$1 AND deleted_at IS NULL AND due_date >= $2::date AND due_date < $3::date
             AND status NOT IN ('Closed')`,
         [tailorId, weekStart.toISOString().slice(0, 10), weekEnd.toISOString().slice(0, 10)]
       ),
       query(
         `SELECT COALESCE(SUM(balance_owed),0) AS total,
                 COUNT(DISTINCT customer_id) FILTER (WHERE balance_owed > 0) AS customers
-           FROM stitchd_orders WHERE tailor_id=$1 AND balance_owed > 0`,
+           FROM stitchd_orders WHERE tailor_id=$1 AND balance_owed > 0 AND deleted_at IS NULL`,
         [tailorId]
       ),
       query(
