@@ -1,29 +1,35 @@
 /**
- * Stitchd AI Fit Consultant (batch 07, spec §5.6 / §7.6).
+ * Stitchd AI Fit Consultant (batch 07, spec §5.6 / §7.6) — Google Gemini.
  *
  * Text-only cut/style advisor for the Nigerian/African tailoring market. Tailor asks
  * "what cut suits a tall slim man?" and gets a concise, practical recommendation. Optional
- * customer/fabric photo URLs are passed to GPT-4o as vision context (no image generation).
+ * customer/fabric photos are passed to Gemini as vision context (no image generation).
+ *
+ * Provider: Google Gemini via the REST `generateContent` endpoint with the global `fetch`
+ * (no SDK dependency). Unlike GPT-4o, Gemini does not fetch image URLs itself, so we download
+ * each photo server-side and inline it as base64 `inline_data` (capped at MAX_PHOTOS; a photo
+ * that can't be fetched is skipped rather than failing the whole request).
  *
  * Pure transport: AI metering + tier-cap enforcement live in the resolver
  * (StitchdAiUsageModel) — the cap is checked BEFORE this call so cost is capped (spec §12).
- * We call OpenAI with the global `fetch` (same approach as stitchdTranscription.service.js)
- * — no SDK dependency.
- *
- * Model selection is a per-tier config knob (plan risk: unit economics): starter uses the
- * cheaper gpt-4o-mini, pro/enterprise get gpt-4o. Vision context is allowed on every tier
- * but capped per query (MAX_PHOTOS) so token cost stays bounded.
+ * Model selection is a per-tier config knob (plan risk: unit economics) and overridable by
+ * env so model names can be tuned without a code change.
  */
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const CHAT_URL = 'https://api.openai.com/v1/chat/completions';
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY || '';
+const API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 const MAX_PHOTOS = 3;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024; // skip oversized images to bound token cost
 
-/** GPT model per tier — the unit-economics knob. */
+/**
+ * Gemini model per tier — the unit-economics knob (env-overridable). Defaults to the
+ * validated GA `gemini-2.0-flash` for every tier; bump pro/enterprise to a stronger model
+ * (e.g. gemini-2.5-pro) by setting GEMINI_MODEL_PRO once their quota supports it.
+ */
 const MODEL_BY_TIER = {
-  starter: 'gpt-4o-mini',
-  pro: 'gpt-4o',
-  enterprise: 'gpt-4o',
+  starter: process.env.GEMINI_MODEL_STARTER || 'gemini-2.0-flash',
+  pro: process.env.GEMINI_MODEL_PRO || 'gemini-2.0-flash',
+  enterprise: process.env.GEMINI_MODEL_PRO || 'gemini-2.0-flash',
 };
 
 const SYSTEM_PROMPT = [
@@ -45,12 +51,27 @@ export function modelForTier(tier) {
   return MODEL_BY_TIER[tier] || MODEL_BY_TIER.starter;
 }
 
+/** Download an image URL and return a Gemini `inline_data` part, or null on any failure. */
+async function fetchImagePart(url) {
+  try {
+    const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+    if (!res.ok) return null;
+    const mime = res.headers.get('content-type') || 'image/jpeg';
+    if (!mime.startsWith('image/')) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > MAX_IMAGE_BYTES) return null;
+    return { inline_data: { mime_type: mime, data: buf.toString('base64') } };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Ask the Fit Consultant. Returns the assistant's answer text.
  * @throws Error with .code 'AI_NOT_CONFIGURED' | 'BAD_INPUT' | 'AI_UPSTREAM'
  */
 export async function askFitConsultant({ prompt, photoUrls = [], tier = 'starter' }) {
-  if (!OPENAI_API_KEY) {
+  if (!GEMINI_API_KEY) {
     const err = new Error('The AI Fit Consultant is not configured on the server.');
     err.code = 'AI_NOT_CONFIGURED';
     throw err;
@@ -62,43 +83,34 @@ export async function askFitConsultant({ prompt, photoUrls = [], tier = 'starter
     throw err;
   }
 
-  const photos = (Array.isArray(photoUrls) ? photoUrls : [])
+  const urls = (Array.isArray(photoUrls) ? photoUrls : [])
     .filter((u) => typeof u === 'string' && u.startsWith('http'))
     .slice(0, MAX_PHOTOS);
+  const imageParts = (await Promise.all(urls.map(fetchImagePart))).filter(Boolean);
 
-  // GPT-4o vision message: text plus any image_url parts.
-  const userContent = [
-    { type: 'text', text },
-    ...photos.map((url) => ({ type: 'image_url', image_url: { url } })),
-  ];
+  const parts = [{ text }, ...imageParts];
 
-  const res = await fetch(CHAT_URL, {
+  const model = modelForTier(tier);
+  const res = await fetch(`${API_BASE}/${model}:generateContent?key=${GEMINI_API_KEY}`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${OPENAI_API_KEY}`,
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: modelForTier(tier),
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: userContent },
-      ],
-      max_tokens: 700,
-      temperature: 0.7,
+      system_instruction: { parts: [{ text: SYSTEM_PROMPT }] },
+      contents: [{ role: 'user', parts }],
+      generationConfig: { temperature: 0.7, maxOutputTokens: 800 },
     }),
     signal: AbortSignal.timeout(45_000),
   });
 
   if (!res.ok) {
     const detail = await res.text().catch(() => '');
-    const err = new Error(`OpenAI error ${res.status}: ${detail.slice(0, 200)}`);
+    const err = new Error(`Gemini error ${res.status}: ${detail.slice(0, 200)}`);
     err.code = 'AI_UPSTREAM';
     throw err;
   }
 
   const data = await res.json();
-  const answer = data?.choices?.[0]?.message?.content?.trim();
+  const answer = data?.candidates?.[0]?.content?.parts?.map((p) => p.text || '').join('').trim();
   if (!answer) {
     const err = new Error('The AI returned an empty response.');
     err.code = 'AI_UPSTREAM';
