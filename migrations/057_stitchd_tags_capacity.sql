@@ -20,7 +20,7 @@ ALTER TABLE stitchd_tailor_profile
   ADD COLUMN IF NOT EXISTS working_hours      JSONB,                         -- { mon:{open,close}, ... }
   ADD COLUMN IF NOT EXISTS auto_notify_status BOOLEAN NOT NULL DEFAULT FALSE;
 
--- ── Birthday lookup: match today's MM-DD per tenant ────────────────────────────
-CREATE INDEX IF NOT EXISTS idx_stitchd_customers_birthday
-  ON stitchd_customers (tailor_id, (to_char(dob, 'MM-DD')))
-  WHERE dob IS NOT NULL;
+-- ── Birthday lookup ────────────────────────────────────────────────────────────
+-- (No functional index on to_char(dob,'MM-DD') — to_char is only STABLE, not IMMUTABLE,
+--  so PostgreSQL rejects it in an index. The daily birthday query filters by MM-DD with a
+--  per-tenant seq scan, which is fine at a single tailor's customer scale.)
