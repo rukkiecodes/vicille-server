@@ -117,6 +117,28 @@ const paymentsService = {
     return req('POST', '/stitchd/collect', { email, amountKobo, channel, reference, callbackUrl: callbackUrl || null, metadata });
     // Returns: { ok, authorizationUrl, reference, ussdCode? }
   },
+
+  // ── Stitchd payouts — bank + transfers (batch 10) ────────────────────────────
+
+  async listBanks() {
+    return req('GET', '/bank/list');
+    // Returns: { ok, banks: [{ name, code }] }
+  },
+
+  async resolveBank({ accountNumber, bankCode }) {
+    return req('POST', '/bank/resolve', { accountNumber, bankCode });
+    // Returns: { ok, accountName, accountNumber }
+  },
+
+  async createTransferRecipient({ name, accountNumber, bankCode }) {
+    return req('POST', '/transfer/recipient', { name, accountNumber, bankCode });
+    // Returns: { ok, recipientCode, accountName }
+  },
+
+  async initiateTransfer({ amountKobo, recipientCode, reason, reference }) {
+    return req('POST', '/transfer/initiate', { amountKobo, recipientCode, reason, reference });
+    // Returns: { ok, transferCode, reference, status }
+  },
 };
 
 export default paymentsService;

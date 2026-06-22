@@ -10,6 +10,7 @@ import WalletModel from '../modules/wallet/wallet.model.js';
 import WalletTransactionModel from '../modules/wallet/walletTransaction.model.js';
 import SavedCardModel from '../modules/wallet/savedCard.model.js';
 import StitchdPaymentModel from '../modules/stitchd/stitchdPayment.model.js';
+import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
 import ReferralModel from '../modules/referrals/referral.model.js';
 import AffiliateModel from '../modules/affiliates/affiliate.model.js';
 import { query } from '../infrastructure/database/postgres.js';
@@ -543,6 +544,26 @@ router.post('/subscription-event', async (req, res) => {
           kind: abandoned ? 'abandoned' : 'failed',
         });
         logger.warn('[internal] stitchd payment failed', { providerReference, reason });
+        break;
+      }
+
+      // ── Stitchd weekly payout settled (transfer.success) ─────────────────────
+      case 'STITCHD_PAYOUT_PAID': {
+        const { providerTransferRef } = req.body;
+        if (!providerTransferRef) break;
+        const payout = await StitchdPayoutModel.markPayoutPaid({ providerTransferRef });
+        logger.info('[internal] stitchd payout paid', { providerTransferRef, payoutId: payout?.id });
+        // FCM push ("Your ₦X payout is on the way") is batch-10 deferred — the app reflects
+        // it via the Payouts screen / pending-balance query.
+        break;
+      }
+
+      // ── Stitchd weekly payout failed/reversed ────────────────────────────────
+      case 'STITCHD_PAYOUT_FAILED': {
+        const { providerTransferRef, reason } = req.body;
+        if (!providerTransferRef) break;
+        await StitchdPayoutModel.markPayoutFailed({ providerTransferRef, reason: reason || null });
+        logger.warn('[internal] stitchd payout failed', { providerTransferRef, reason });
         break;
       }
 
