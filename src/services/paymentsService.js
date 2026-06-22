@@ -139,6 +139,13 @@ const paymentsService = {
     return req('POST', '/transfer/initiate', { amountKobo, recipientCode, reason, reference });
     // Returns: { ok, transferCode, reference, status }
   },
+
+  // ── Stitchd subscription billing (batch 11) ──────────────────────────────────
+
+  async startStitchdSubscription({ email, tailorId, planCode, amountKobo, tier, fullName, callbackUrl }) {
+    return req('POST', '/stitchd/subscribe', { email, tailorId, planCode, amountKobo, tier, fullName: fullName || null, callbackUrl: callbackUrl || null });
+    // Returns: { ok, authorizationUrl, reference }
+  },
 };
 
 export default paymentsService;

@@ -16,6 +16,10 @@
     {
       "path": "/cron/stitchd-payouts",
       "schedule": "0 9 * * 1"
+    },
+    {
+      "path": "/cron/stitchd-billing",
+      "schedule": "0 8 * * *"
     }
   ]
 }

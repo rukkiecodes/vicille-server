@@ -25,6 +25,7 @@ import stitchdAiTypeDefs from './stitchdAi.typeDefs.js';
 import stitchdSyncTypeDefs from './stitchdSync.typeDefs.js';
 import stitchdTelemetryTypeDefs from './stitchdTelemetry.typeDefs.js';
 import stitchdPayoutTypeDefs from './stitchdPayout.typeDefs.js';
+import stitchdBillingTypeDefs from './stitchdBilling.typeDefs.js';
 
 // Base type definitions with root Query and Mutation types
 const baseTypeDefs = gql`
@@ -65,6 +66,7 @@ const typeDefs = [
   stitchdSyncTypeDefs,
   stitchdTelemetryTypeDefs,
   stitchdPayoutTypeDefs,
+  stitchdBillingTypeDefs,
 ];
 
 export default typeDefs;

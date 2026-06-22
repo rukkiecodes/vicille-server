@@ -12,17 +12,10 @@
  */
 import { GraphQLError } from 'graphql';
 import { query } from '../../infrastructure/database/postgres.js';
+import { aiCapFor } from './stitchdEntitlements.js';
 
-/**
- * Monthly allowance per tier, per feature. `Infinity` = unlimited. Tunable; kept here as
- * the single source of truth so batch 07/12 can extend it for other features.
- */
-const CAPS = {
-  transcription: { starter: 30, pro: 500, enterprise: Infinity },
-  // AI Fit Consultant text queries (batch 07). Kept low on starter so AI cost never
-  // outruns subscription revenue (spec §12); upgrade-selling lands in batch 11.
-  fit_consultant: { starter: 20, pro: 300, enterprise: Infinity },
-};
+// Tier AI caps now live in the entitlements engine (batch 11) so billing + AI batches share
+// one source of truth. `capFor` delegates to `aiCapFor(tier, feature)`.
 
 /** Human label per feature for cap-reached messaging. */
 const LABELS = {
@@ -38,14 +31,11 @@ function currentPeriod(now = new Date()) {
 }
 
 const StitchdAiUsageModel = {
-  CAPS,
   currentPeriod,
 
   /** Cap for a (feature, tier) pair; 0 if the feature is unknown (fail-closed). */
   capFor(feature, tier) {
-    const f = CAPS[feature];
-    if (!f) return 0;
-    return f[tier] ?? f.starter ?? 0;
+    return aiCapFor(tier, feature);
   },
 
   /** Total units consumed by this tenant for a feature in the given period. */

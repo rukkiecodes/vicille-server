@@ -6,6 +6,7 @@
  */
 import { Router } from 'express';
 import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
+import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -31,6 +32,19 @@ router.all('/stitchd-payouts', async (_req, res) => {
     res.status(200).json({ ok: true, tenants: results.length, settled, results });
   } catch (err) {
     logger.error('[cron] stitchd payouts error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Daily billing sweep: expire trials past their end, suspend dunning accounts past grace.
+router.all('/stitchd-billing', async (_req, res) => {
+  try {
+    const trials = await StitchdBillingModel.expireTrials();
+    const dunning = await StitchdBillingModel.suspendAfterGrace();
+    logger.info('[cron] stitchd billing sweep', { ...trials, ...dunning });
+    res.status(200).json({ ok: true, ...trials, ...dunning });
+  } catch (err) {
+    logger.error('[cron] stitchd billing error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

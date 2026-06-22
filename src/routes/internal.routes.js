@@ -11,6 +11,7 @@ import WalletTransactionModel from '../modules/wallet/walletTransaction.model.js
 import SavedCardModel from '../modules/wallet/savedCard.model.js';
 import StitchdPaymentModel from '../modules/stitchd/stitchdPayment.model.js';
 import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
+import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
 import ReferralModel from '../modules/referrals/referral.model.js';
 import AffiliateModel from '../modules/affiliates/affiliate.model.js';
 import { query } from '../infrastructure/database/postgres.js';
@@ -564,6 +565,32 @@ router.post('/subscription-event', async (req, res) => {
         if (!providerTransferRef) break;
         await StitchdPayoutModel.markPayoutFailed({ providerTransferRef, reason: reason || null });
         logger.warn('[internal] stitchd payout failed', { providerTransferRef, reason });
+        break;
+      }
+
+      // ── Stitchd subscription billing (batch 11) ──────────────────────────────
+      case 'STITCHD_SUBSCRIPTION_ACTIVATED': {
+        const { tailorId, customerCode, subscriptionCode, emailToken, planCode, tier, reference, amountKobo } = req.body;
+        await StitchdBillingModel.activate({ tailorId, customerCode, subscriptionCode, emailToken, planCode, tier, reference, amountKobo });
+        logger.info('[internal] stitchd subscription activated', { tailorId, subscriptionCode });
+        break;
+      }
+      case 'STITCHD_SUBSCRIPTION_CREATED': {
+        const { customerCode, subscriptionCode, emailToken, planCode } = req.body;
+        await StitchdBillingModel.activate({ customerCode, subscriptionCode, emailToken, planCode });
+        logger.info('[internal] stitchd subscription codes stored', { subscriptionCode });
+        break;
+      }
+      case 'STITCHD_SUBSCRIPTION_RENEWED': {
+        const { subscriptionCode, reference, amountKobo } = req.body;
+        await StitchdBillingModel.renew({ subscriptionCode, reference, amountKobo });
+        logger.info('[internal] stitchd subscription renewed', { subscriptionCode });
+        break;
+      }
+      case 'STITCHD_SUBSCRIPTION_PAYMENT_FAILED': {
+        const { subscriptionCode, reference, amountKobo } = req.body;
+        await StitchdBillingModel.paymentFailed({ subscriptionCode, reference, amountKobo });
+        logger.warn('[internal] stitchd subscription payment failed', { subscriptionCode });
         break;
       }
 
