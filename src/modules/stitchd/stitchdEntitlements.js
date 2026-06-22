@@ -18,17 +18,17 @@ const PRICE_NGN = { starter: 5000, pro: 12000, enterprise: 0 };
 /** Per-tier entitlements. `aiCaps` keys match `stitchd_ai_usage.feature`. */
 const ENTITLEMENTS = {
   starter: {
-    aiCaps:          { transcription: 30, fit_consultant: 20, design: 5 },
+    aiCaps:          { transcription: 30, fit_consultant: 20, brief: 20, design: 5 },
     teamMemberSlots: 1,
-    features:        { teamMembers: false, designGenerator: true, briefExtractor: false, socialPost: false },
+    features:        { teamMembers: false, designGenerator: true, briefExtractor: true, socialPost: false },
   },
   pro: {
-    aiCaps:          { transcription: 500, fit_consultant: 300, design: 100 },
+    aiCaps:          { transcription: 500, fit_consultant: 300, brief: 200, design: 100 },
     teamMemberSlots: 5,
     features:        { teamMembers: true, designGenerator: true, briefExtractor: true, socialPost: true },
   },
   enterprise: {
-    aiCaps:          { transcription: Infinity, fit_consultant: Infinity, design: Infinity },
+    aiCaps:          { transcription: Infinity, fit_consultant: Infinity, brief: Infinity, design: Infinity },
     teamMemberSlots: Infinity,
     features:        { teamMembers: true, designGenerator: true, briefExtractor: true, socialPost: true },
   },

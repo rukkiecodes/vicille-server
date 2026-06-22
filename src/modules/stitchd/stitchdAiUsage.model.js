@@ -21,6 +21,8 @@ import { aiCapFor } from './stitchdEntitlements.js';
 const LABELS = {
   transcription: 'voice transcription',
   fit_consultant: 'AI Fit Consultant',
+  brief: 'AI Brief Extractor',
+  design: 'AI Design Generator',
 };
 
 /** Calendar-month bucket 'YYYY-MM' (UTC) the usage counts against. */

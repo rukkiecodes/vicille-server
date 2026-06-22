@@ -1,6 +1,6 @@
 import { v2 as cloudinary } from 'cloudinary';
-import config from '../../config/index.js';
-import logger from '../../core/logger/index.js';
+import config from '../config/index.js';
+import logger from '../core/logger/index.js';
 
 // Configure Cloudinary
 cloudinary.config({
@@ -108,6 +108,31 @@ export const uploadJobProofPhoto = async (base64DataUri, jobId, index) => {
 };
 
 /**
+ * Upload a base64 data URI (e.g. an AI-generated image) to a folder and return the result
+ * (incl. secure_url). Used by the Stitchd AI Design Generator (batch 12).
+ */
+export const uploadBase64Image = async (base64DataUri, { folder = 'stitchd/ai-designs', publicId } = {}) => {
+  return new Promise((resolve, reject) => {
+    cloudinary.uploader.upload(
+      base64DataUri,
+      {
+        folder,
+        public_id: publicId || `design-${Date.now()}-${Math.round(Math.random() * 1e6)}`,
+        transformation: [{ width: 1024, height: 1024, crop: 'limit' }, { quality: 'auto' }],
+      },
+      (error, result) => {
+        if (error) {
+          logger.error('Cloudinary base64 upload error:', error);
+          reject(error);
+        } else {
+          resolve(result);
+        }
+      }
+    );
+  });
+};
+
+/**
  * Delete file from Cloudinary
  */
 export const deleteFromCloudinary = async (publicId) => {
@@ -152,6 +177,7 @@ export default {
   uploadOrderPhotos,
   uploadPortfolioItem,
   uploadJobProofPhoto,
+  uploadBase64Image,
   deleteFromCloudinary,
   generateSecureUrl,
   getFileInfo,
