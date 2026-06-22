@@ -8,6 +8,7 @@
  */
 import { GraphQLError } from 'graphql';
 import StitchdCustomerModel from '../../modules/stitchd/stitchdCustomer.model.js';
+import StitchdTagModel from '../../modules/stitchd/stitchdTag.model.js';
 import { requireTailor } from '../stitchd.guard.js';
 import logger from '../../core/logger/index.js';
 
@@ -45,6 +46,28 @@ const stitchdCustomerResolvers = {
           extensions: { code: 'INTERNAL_SERVER_ERROR' },
         });
       }
+    },
+
+    stitchdTags: async (_p, _a, context) => {
+      const tailorId = requireTailor(context);
+      try { return await StitchdTagModel.distinctLabels(tailorId); }
+      catch (e) { logger.error('stitchdTags error:', e); throw new GraphQLError('Could not load tags.', { extensions: { code: 'INTERNAL_SERVER_ERROR' } }); }
+    },
+
+    stitchdBirthdaysToday: async (_p, _a, context) => {
+      const tailorId = requireTailor(context);
+      try { return await StitchdTagModel.birthdaysToday(tailorId); }
+      catch (e) { logger.error('stitchdBirthdaysToday error:', e); throw new GraphQLError('Could not load birthdays.', { extensions: { code: 'INTERNAL_SERVER_ERROR' } }); }
+    },
+  },
+
+  // Field resolver: a customer's tags (batch 13). Modest per-tailor volume → simple per-row load.
+  StitchdCustomer: {
+    tags: async (parent, _a, context) => {
+      const tailorId = requireTailor(context);
+      if (!parent?.id) return [];
+      try { return await StitchdTagModel.forCustomer(tailorId, parent.id); }
+      catch { return []; }
     },
   },
 
@@ -91,6 +114,18 @@ const stitchdCustomerResolvers = {
           extensions: { code: 'INTERNAL_SERVER_ERROR' },
         });
       }
+    },
+
+    addStitchdCustomerTag: async (_p, { customerId, label, color }, context) => {
+      const tailorId = requireTailor(context);
+      try { return await StitchdTagModel.add(tailorId, customerId, label, color); }
+      catch (e) { if (e instanceof GraphQLError) throw e; logger.error('addStitchdCustomerTag error:', e); throw new GraphQLError('Could not add the tag.', { extensions: { code: 'INTERNAL_SERVER_ERROR' } }); }
+    },
+
+    removeStitchdCustomerTag: async (_p, { id }, context) => {
+      const tailorId = requireTailor(context);
+      try { return await StitchdTagModel.remove(tailorId, id); }
+      catch (e) { logger.error('removeStitchdCustomerTag error:', e); throw new GraphQLError('Could not remove the tag.', { extensions: { code: 'INTERNAL_SERVER_ERROR' } }); }
     },
   },
 };

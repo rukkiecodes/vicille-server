@@ -256,6 +256,39 @@ const StitchdOrderModel = {
     return rows.map((r) => format(r, { customerName: r.customer_name }));
   },
 
+  /**
+   * Capacity status for the week containing `weekOf` (default now): the tailor's declared
+   * weekly_capacity (orders/week) vs committed open orders due that week (batch 13).
+   * `isOver` is a soft, non-blocking warning flag. No capacity declared → never over.
+   */
+  async capacityStatus(tailorId, weekOf = null) {
+    const base = weekOf ? new Date(weekOf) : new Date();
+    const d = new Date(Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate()));
+    const dow = (d.getUTCDay() + 6) % 7; // Mon=0
+    d.setUTCDate(d.getUTCDate() - dow);
+    const weekStart = d.toISOString().slice(0, 10);
+    const weekEnd = new Date(d.getTime() + 7 * 86400000).toISOString().slice(0, 10);
+
+    const [capRes, committedRes] = await Promise.all([
+      query('SELECT weekly_capacity FROM stitchd_tailor_profile WHERE tailor_id=$1', [tailorId]),
+      query(
+        `SELECT COUNT(*)::int AS n FROM stitchd_orders
+          WHERE tailor_id=$1 AND deleted_at IS NULL
+            AND due_date >= $2::date AND due_date < $3::date
+            AND status NOT IN ('Delivered','Closed')`,
+        [tailorId, weekStart, weekEnd]
+      ),
+    ]);
+    const capacity = capRes.rows[0]?.weekly_capacity ?? null;
+    const committed = committedRes.rows[0]?.n || 0;
+    return {
+      weekStart,
+      capacity: capacity == null ? null : Number(capacity),
+      committed,
+      isOver: capacity != null && committed > Number(capacity),
+    };
+  },
+
   /** Full detail: order + items + activity timeline + customer name. */
   async findById(tailorId, id) {
     const { rows } = await query(

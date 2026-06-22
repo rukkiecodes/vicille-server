@@ -37,6 +37,9 @@ const stitchdAuthTypeDefs = gql`
     subscriptionStatus: String!   # trial|active|past_due|canceled
     tier: String!                 # starter|pro|enterprise
     trialEndsAt: DateTime
+    weeklyCapacity: Int           # orders/week (batch 13)
+    workingHours: JSON            # { mon:{open,close}, ... } (batch 13)
+    autoNotifyStatus: Boolean     # auto WhatsApp on status change (batch 13)
     profileComplete: Boolean!
     createdAt: DateTime
   }

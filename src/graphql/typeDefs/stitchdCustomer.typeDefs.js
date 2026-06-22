@@ -24,6 +24,12 @@ const stitchdCustomerTypeDefs = gql`
 
     "A single customer (with stats) owned by the authenticated tailor; null if not theirs."
     stitchdCustomer(id: ID!): StitchdCustomer
+
+    "Distinct tag labels the tailor has used — powers the customer-list filter bar (batch 13)."
+    stitchdTags: [StitchdTagPreset!]!
+
+    "Customers whose birthday is today (WAT) — for the in-app birthday reminder (batch 13)."
+    stitchdBirthdaysToday: [StitchdBirthday!]!
   }
 
   extend type Mutation {
@@ -32,6 +38,12 @@ const stitchdCustomerTypeDefs = gql`
 
     "Update an existing customer owned by the authenticated tailor."
     updateStitchdCustomer(id: ID!, input: UpdateStitchdCustomerInput!): StitchdCustomer!
+
+    "Add a colour-coded tag to a customer (idempotent on label) (batch 13)."
+    addStitchdCustomerTag(customerId: ID!, label: String!, color: String): StitchdCustomerTag!
+
+    "Remove a customer tag by id (batch 13)."
+    removeStitchdCustomerTag(id: ID!): Boolean!
   }
 
   enum StitchdCustomerFilter {
@@ -67,6 +79,30 @@ const stitchdCustomerTypeDefs = gql`
     totalSpent: Float!
     owedAmount: Float!
     lastOrderDate: DateTime
+
+    "Colour-coded segmentation tags (batch 13)."
+    tags: [StitchdCustomerTag!]!
+  }
+
+  type StitchdCustomerTag {
+    id: ID!
+    customerId: ID!
+    label: String!
+    color: String
+    createdAt: DateTime
+  }
+
+  type StitchdTagPreset {
+    label: String!
+    color: String
+  }
+
+  type StitchdBirthday {
+    id: ID!
+    name: String!
+    phone: String
+    profilePhoto: String
+    dob: String
   }
 
   type StitchdCustomerPage {

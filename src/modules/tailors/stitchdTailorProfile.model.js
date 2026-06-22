@@ -34,6 +34,9 @@ function format(row, phone = null) {
     subscriptionStatus: row.subscription_status,
     tier:               row.tier,
     trialEndsAt:        row.trial_ends_at,
+    weeklyCapacity:     row.weekly_capacity ?? null,
+    workingHours:       row.working_hours ?? null,
+    autoNotifyStatus:   Boolean(row.auto_notify_status),
     profileComplete:    Boolean(businessName && ownerName && locationCity),
     createdAt:          row.created_at,
   };
@@ -131,6 +134,20 @@ const StitchdTailorProfileModel = {
         sets.push(`${col}=$${i++}`);
         vals.push(data[jsKey]);
       }
+    }
+
+    // Availability / capacity settings (batch 13).
+    if ('weeklyCapacity' in data && data.weeklyCapacity !== undefined) {
+      sets.push(`weekly_capacity=$${i++}`);
+      vals.push(data.weeklyCapacity);
+    }
+    if ('workingHours' in data && data.workingHours !== undefined) {
+      sets.push(`working_hours=$${i++}::jsonb`);
+      vals.push(JSON.stringify(data.workingHours));
+    }
+    if ('autoNotifyStatus' in data && data.autoNotifyStatus !== undefined) {
+      sets.push(`auto_notify_status=$${i++}`);
+      vals.push(Boolean(data.autoNotifyStatus));
     }
 
     // Ensure the trial is stamped (idempotent — only fills NULLs).

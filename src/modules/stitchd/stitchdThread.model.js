@@ -144,6 +144,35 @@ const StitchdThreadModel = {
 
     return { thread: formatThread(thread), message: formatMessage(messageRow) };
   },
+
+  /**
+   * Log an imported (inbound) voice note with its transcript into the customer thread
+   * (batch 13). `kind='voice'`, transcript stored in `body`, audio in `media_url`. Idempotent
+   * on (tailorId, clientUuid). Transcription itself happens in the resolver (metered).
+   */
+  async logVoiceNote(tailorId, input = {}) {
+    if (!input.clientUuid) throw new GraphQLError('Missing message id.', { extensions: { code: 'BAD_USER_INPUT' } });
+    if (!(await this.customerBelongsToTailor(tailorId, input.customerId))) {
+      throw new GraphQLError('Customer not found.', { extensions: { code: 'NOT_FOUND' } });
+    }
+    const thread = await this.ensureThread(tailorId, input.customerId);
+    const { rows } = await query(
+      `INSERT INTO stitchd_messages
+         (client_uuid, thread_id, tailor_id, customer_id, kind, body, media_url, direction, sent_via)
+       VALUES ($1,$2,$3,$4,'voice',$5,$6,'inbound','whatsapp')
+       ON CONFLICT (tailor_id, client_uuid) DO NOTHING
+       RETURNING *`,
+      [input.clientUuid, thread.id, tailorId, input.customerId, input.transcript ?? null, input.mediaUrl || null]
+    );
+    let messageRow = rows[0];
+    if (messageRow) {
+      await query('UPDATE stitchd_threads SET last_message_at = now(), updated_at = now() WHERE id=$1', [thread.id]);
+    } else {
+      const existing = await query('SELECT * FROM stitchd_messages WHERE tailor_id=$1 AND client_uuid=$2', [tailorId, input.clientUuid]);
+      messageRow = existing.rows[0];
+    }
+    return { thread: formatThread(thread), message: formatMessage(messageRow) };
+  },
 };
 
 export default StitchdThreadModel;
