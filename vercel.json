@@ -24,6 +24,10 @@
     {
       "path": "/cron/stitchd-account-purge",
       "schedule": "30 8 * * *"
+    },
+    {
+      "path": "/cron/stitchd-styleu-expire",
+      "schedule": "15 8 * * *"
     }
   ]
 }

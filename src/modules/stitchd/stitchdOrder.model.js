@@ -14,6 +14,7 @@
  */
 import { GraphQLError } from 'graphql';
 import { query, getClient } from '../../infrastructure/database/postgres.js';
+import logger from '../../core/logger/index.js';
 
 export const STATUS_FLOW = ['New', 'In Progress', 'Ready', 'Delivered', 'Closed'];
 
@@ -350,6 +351,16 @@ const StitchdOrderModel = {
       });
 
       await client.query('COMMIT');
+
+      // Style-U integration (batch 20): when a marketplace order is Delivered, emit the delivery
+      // event so the separate Style-U payout stream releases. Best-effort, never blocks the status
+      // change. Dynamic import avoids a circular dependency with the Style-U model.
+      if (target === 'Delivered' && row.source === 'style-u') {
+        import('./stitchdStyleU.model.js')
+          .then(({ default: StyleU }) => StyleU.onOrderDelivered(id))
+          .catch((e) => logger.error('[order] Style-U delivery hook failed:', e.message));
+      }
+
       return this.findById(tailorId, id);
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});

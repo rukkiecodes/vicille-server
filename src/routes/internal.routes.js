@@ -13,6 +13,7 @@ import StitchdPaymentModel from '../modules/stitchd/stitchdPayment.model.js';
 import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
 import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
 import StitchdEnterpriseModel from '../modules/stitchd/stitchdEnterprise.model.js';
+import StitchdStyleUModel from '../modules/stitchd/stitchdStyleU.model.js';
 import ReferralModel from '../modules/referrals/referral.model.js';
 import AffiliateModel from '../modules/affiliates/affiliate.model.js';
 import { query } from '../infrastructure/database/postgres.js';
@@ -162,6 +163,38 @@ router.post('/stitchd-enterprise', async (req, res) => {
     return res.status(200).json({ ok: true, result });
   } catch (err) {
     logger.error(`[internal] stitchd-enterprise ${action} error:`, err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// ── POST /internal/stitchd-styleu ────────────────────────────────────────────
+// The Style-U-side boundary on the shared backend (batch 20). Service-key guarded; never tailor-
+// facing. Body: { action, tailorId, ...payload }. Keep this contract narrow + versioned.
+router.post('/stitchd-styleu', async (req, res) => {
+  const { action, tailorId } = req.body || {};
+  if (!action || !tailorId) return res.status(400).json({ error: 'action and tailorId required' });
+  try {
+    let result;
+    switch (action) {
+      case 'enqueueOffer':
+        result = await StitchdStyleUModel.enqueueOffer(tailorId, req.body.offer || req.body);
+        break;
+      case 'setVetting':
+        result = await StitchdStyleUModel.setVetting(tailorId, req.body.status);
+        break;
+      case 'markPayoutPaid':
+        result = await StitchdStyleUModel.markPayoutPaid(tailorId, req.body.styleuOrderRef);
+        break;
+      case 'recordMetrics':
+        result = await StitchdStyleUModel.recordMetrics(tailorId, req.body);
+        break;
+      default:
+        return res.status(400).json({ error: `Unknown action: ${action}` });
+    }
+    logger.info('[internal] stitchd-styleu', { action, tailorId });
+    return res.status(200).json({ ok: true, result });
+  } catch (err) {
+    logger.error(`[internal] stitchd-styleu ${action} error:`, err);
     return res.status(500).json({ ok: false, error: err.message });
   }
 });

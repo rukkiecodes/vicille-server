@@ -8,6 +8,7 @@ import { Router } from 'express';
 import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
 import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
 import StitchdAccountModel from '../modules/stitchd/stitchdAccount.model.js';
+import StitchdStyleUModel from '../modules/stitchd/stitchdStyleU.model.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -59,6 +60,18 @@ router.all('/stitchd-account-purge', async (_req, res) => {
     res.status(200).json({ ok: true, candidates: results.length, purged, results });
   } catch (err) {
     logger.error('[cron] stitchd account purge error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Expire unanswered Style-U offers past their SLA (batch 20).
+router.all('/stitchd-styleu-expire', async (_req, res) => {
+  try {
+    const { expired } = await StitchdStyleUModel.expireOffers();
+    logger.info('[cron] stitchd styleu expire', { expired });
+    res.status(200).json({ ok: true, expired });
+  } catch (err) {
+    logger.error('[cron] stitchd styleu expire error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
