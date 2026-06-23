@@ -13,6 +13,7 @@
 import { GraphQLError } from 'graphql';
 import { query } from '../../infrastructure/database/postgres.js';
 import { aiCapFor } from './stitchdEntitlements.js';
+import StitchdEnterpriseModel from './stitchdEnterprise.model.js';
 
 // Tier AI caps now live in the entitlements engine (batch 11) so billing + AI batches share
 // one source of truth. `capFor` delegates to `aiCapFor(tier, feature)`.
@@ -56,7 +57,8 @@ const StitchdAiUsageModel = {
    * Returns { used, cap, remaining } when allowed.
    */
   async assertWithinCap(tailorId, feature, tier) {
-    const cap = this.capFor(feature, tier);
+    // Effective cap = tier default with any per-tenant override (batch 17 enterprise wins).
+    const cap = (await StitchdEnterpriseModel.resolveEntitlements(tailorId)).aiCap(feature);
     if (cap === Infinity) return { used: 0, cap: Infinity, remaining: Infinity };
     const period = currentPeriod();
     const used = await this.usedThisPeriod(tailorId, feature, period);
@@ -81,7 +83,7 @@ const StitchdAiUsageModel = {
 
   /** Snapshot for surfacing "queries remaining" (batch 07 AI hub). */
   async snapshot(tailorId, feature, tier) {
-    const cap = this.capFor(feature, tier);
+    const cap = (await StitchdEnterpriseModel.resolveEntitlements(tailorId)).aiCap(feature);
     const used = await this.usedThisPeriod(tailorId, feature);
     return {
       feature,

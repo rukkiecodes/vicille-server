@@ -31,6 +31,7 @@ import stitchdRelationshipTypeDefs from './stitchdRelationship.typeDefs.js';
 import stitchdAnalyticsTypeDefs from './stitchdAnalytics.typeDefs.js';
 import stitchdAccountTypeDefs from './stitchdAccount.typeDefs.js';
 import stitchdTeamTypeDefs from './stitchdTeam.typeDefs.js';
+import stitchdEnterpriseTypeDefs from './stitchdEnterprise.typeDefs.js';
 
 // Base type definitions with root Query and Mutation types
 const baseTypeDefs = gql`
@@ -77,6 +78,7 @@ const typeDefs = [
   stitchdAnalyticsTypeDefs,
   stitchdAccountTypeDefs,
   stitchdTeamTypeDefs,
+  stitchdEnterpriseTypeDefs,
 ];
 
 export default typeDefs;

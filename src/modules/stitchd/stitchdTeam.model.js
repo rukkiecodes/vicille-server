@@ -9,7 +9,8 @@ import crypto from 'crypto';
 import { GraphQLError } from 'graphql';
 import { query } from '../../infrastructure/database/postgres.js';
 import { effectivePermissions, ROLES } from './stitchdPermissions.js';
-import { hasFeature, teamSlotsFor } from './stitchdEntitlements.js';
+import { hasFeature } from './stitchdEntitlements.js';
+import StitchdEnterpriseModel from './stitchdEnterprise.model.js';
 import termii from '../../services/termii.service.js';
 import logger from '../../core/logger/index.js';
 
@@ -60,9 +61,9 @@ const StitchdTeamModel = {
     return rows[0];
   },
 
-  /** Seat usage vs the tier cap (∞ for enterprise → null). */
+  /** Seat usage vs the EFFECTIVE cap (tier default or enterprise override; ∞ → null). */
   async seatInfo(tailorId, tier) {
-    const cap = teamSlotsFor(tier); // owner counts as a seat
+    const cap = (await StitchdEnterpriseModel.resolveEntitlements(tailorId)).teamSeatCap; // owner counts as a seat
     const { rows } = await query(
       `SELECT COUNT(*)::int AS n FROM stitchd_team_members WHERE tailor_id=$1 AND status IN ('invited','active')`,
       [tailorId]

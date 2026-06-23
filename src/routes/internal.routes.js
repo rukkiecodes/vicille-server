@@ -12,6 +12,7 @@ import SavedCardModel from '../modules/wallet/savedCard.model.js';
 import StitchdPaymentModel from '../modules/stitchd/stitchdPayment.model.js';
 import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
 import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
+import StitchdEnterpriseModel from '../modules/stitchd/stitchdEnterprise.model.js';
 import ReferralModel from '../modules/referrals/referral.model.js';
 import AffiliateModel from '../modules/affiliates/affiliate.model.js';
 import { query } from '../infrastructure/database/postgres.js';
@@ -129,6 +130,41 @@ async function sendSubscriptionFailedEmail({ user, planName, reason }) {
     `Hi ${user.fullName || 'there'},\n\nWe could not complete activation for ${planName || 'your selected plan'}.\nReason: ${reason || 'The authorization was not completed.'}`
   );
 }
+
+// ── POST /internal/stitchd-enterprise ────────────────────────────────────────
+// Ops/account-manager actions for the Enterprise tier (batch 17). Service-key guarded.
+// Body: { action, tailorId, ...payload }.
+router.post('/stitchd-enterprise', async (req, res) => {
+  const { action, tailorId } = req.body || {};
+  if (!action || !tailorId) return res.status(400).json({ error: 'action and tailorId required' });
+  try {
+    let result;
+    switch (action) {
+      case 'setEntitlements':
+        result = await StitchdEnterpriseModel.setOverrides(tailorId, req.body);
+        break;
+      case 'upsertAccount':
+        result = await StitchdEnterpriseModel.upsertAccount(tailorId, req.body);
+        break;
+      case 'issueInvoice':
+        result = await StitchdEnterpriseModel.issueInvoice(tailorId, req.body);
+        break;
+      case 'markInvoicePaid':
+        result = await StitchdEnterpriseModel.setInvoiceStatus(tailorId, req.body.invoiceId, 'paid');
+        break;
+      case 'voidInvoice':
+        result = await StitchdEnterpriseModel.setInvoiceStatus(tailorId, req.body.invoiceId, 'void');
+        break;
+      default:
+        return res.status(400).json({ error: `Unknown action: ${action}` });
+    }
+    logger.info('[internal] stitchd-enterprise', { action, tailorId });
+    return res.status(200).json({ ok: true, result });
+  } catch (err) {
+    logger.error(`[internal] stitchd-enterprise ${action} error:`, err);
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
 
 // ── POST /internal/subscription-event ────────────────────────────────────────
 router.post('/subscription-event', async (req, res) => {

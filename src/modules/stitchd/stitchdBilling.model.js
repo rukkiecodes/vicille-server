@@ -242,7 +242,8 @@ const StitchdBillingModel = {
     const { rowCount } = await query(
       `UPDATE stitchd_tailor_profile
           SET subscription_status='past_due', updated_at=now()
-        WHERE subscription_status='trial' AND trial_ends_at IS NOT NULL AND trial_ends_at < $1`,
+        WHERE subscription_status='trial' AND tier <> 'enterprise'
+          AND trial_ends_at IS NOT NULL AND trial_ends_at < $1`,
       [now]
     );
     return { expired: rowCount };
@@ -253,7 +254,8 @@ const StitchdBillingModel = {
     const { rowCount } = await query(
       `UPDATE stitchd_tailor_profile
           SET subscription_status='canceled', updated_at=now()
-        WHERE subscription_status='past_due' AND grace_ends_at IS NOT NULL AND grace_ends_at < $1`,
+        WHERE subscription_status='past_due' AND tier <> 'enterprise'
+          AND grace_ends_at IS NOT NULL AND grace_ends_at < $1`,
       [now]
     );
     return { suspended: rowCount };
