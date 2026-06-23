@@ -359,6 +359,24 @@ const StitchdOrderModel = {
     }
   },
 
+  /**
+   * Advance many orders to a status in one call (batch 19). Each order is validated and advanced
+   * independently; returns a per-id result so partial failures are surfaced, not swallowed.
+   */
+  async bulkAdvance(tailorId, orderIds = [], toStatus = null) {
+    const ids = [...new Set((orderIds || []).filter(Boolean))];
+    const results = [];
+    for (const id of ids) {
+      try {
+        const order = await this.advanceStatus(tailorId, id, toStatus || null, {});
+        results.push({ id, ok: true, status: order?.status || null, error: null });
+      } catch (e) {
+        results.push({ id, ok: false, status: null, error: e.message || 'Failed' });
+      }
+    }
+    return results;
+  },
+
   /** Edit due date / notes / total override / items (replace). Recomputes balance + logs edit. */
   async update(tailorId, id, patch = {}) {
     const row = await this._row(tailorId, id);

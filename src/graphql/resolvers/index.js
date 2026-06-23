@@ -32,6 +32,7 @@ import stitchdAccountResolvers from './stitchdAccount.resolvers.js';
 import stitchdTeamResolvers from './stitchdTeam.resolvers.js';
 import stitchdEnterpriseResolvers from './stitchdEnterprise.resolvers.js';
 import stitchdPortalResolvers from './stitchdPortal.resolvers.js';
+import stitchdTemplatesResolvers from './stitchdTemplates.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -68,6 +69,7 @@ const resolvers = [
   stitchdTeamResolvers,
   stitchdEnterpriseResolvers,
   stitchdPortalResolvers,
+  stitchdTemplatesResolvers,
 ];
 
 export default resolvers;

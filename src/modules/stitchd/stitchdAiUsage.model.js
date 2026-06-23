@@ -24,6 +24,9 @@ const LABELS = {
   fit_consultant: 'AI Fit Consultant',
   brief: 'AI Brief Extractor',
   design: 'AI Design Generator',
+  validator: 'AI Measurement Validator',
+  autotag: 'AI Auto-Tag',
+  social: 'AI Social Post Generator',
 };
 
 /** Calendar-month bucket 'YYYY-MM' (UTC) the usage counts against. */
