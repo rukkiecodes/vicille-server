@@ -41,6 +41,10 @@ const getUser = (req) => {
       role: decoded.role,
       email: decoded.email,
       type: decoded.type,
+      // Stitchd team-member claims (batch 16); undefined for owners/Vicelle.
+      stitchdTailorId: decoded.stitchdTailorId,
+      memberId: decoded.memberId,
+      memberRole: decoded.memberRole,
     };
   } catch (error) {
     logger.debug('GraphQL auth: Invalid or expired token');
@@ -94,6 +98,11 @@ export const setupGraphQL = async (app, httpServer) => {
         return {
           user,
           req,
+          // Stitchd team-member session (batch 16): owner tenant + member identity, which
+          // requireTailor/requirePermission read. Null for owners (fall back to user.id).
+          tailorId: user?.stitchdTailorId || null,
+          memberId: user?.memberId || null,
+          memberRole: user?.memberRole || null,
         };
       },
     })

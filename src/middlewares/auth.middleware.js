@@ -98,6 +98,11 @@ export const generateAccessToken = (payload) => {
       email: payload.email,
       role: payload.role,
       type: payload.type,
+      // Stitchd team-member sessions (batch 16): the owner tenant + member identity, so the
+      // GraphQL context resolves to the owner's tailorId and permissions are enforced.
+      ...(payload.stitchdTailorId ? { stitchdTailorId: payload.stitchdTailorId } : {}),
+      ...(payload.memberId ? { memberId: payload.memberId } : {}),
+      ...(payload.memberRole ? { memberRole: payload.memberRole } : {}),
     },
     config.jwt.secret,
     {

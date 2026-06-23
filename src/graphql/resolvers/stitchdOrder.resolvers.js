@@ -7,7 +7,7 @@
  */
 import { GraphQLError } from 'graphql';
 import StitchdOrderModel from '../../modules/stitchd/stitchdOrder.model.js';
-import { requireTailor } from '../stitchd.guard.js';
+import { requireTailor, requirePermission } from '../stitchd.guard.js';
 import logger from '../../core/logger/index.js';
 
 const FILTER_MAP = { ALL: 'ALL', ACTIVE: 'ACTIVE', NEW: 'NEW', IN_PROGRESS: 'IN_PROGRESS', READY: 'READY', OVERDUE: 'OVERDUE' };
@@ -60,7 +60,7 @@ const stitchdOrderResolvers = {
     },
 
     advanceStitchdOrderStatus: async (_p, { id, toStatus, completionPhoto, note }, context) => {
-      const tailorId = requireTailor(context);
+      const { tailorId } = await requirePermission(context, 'orders:write');
       try {
         return await StitchdOrderModel.advanceStatus(tailorId, id, toStatus || null, { completionPhoto, note });
       } catch (e) { throw wrap(e, 'Could not update the order status'); }
@@ -74,7 +74,7 @@ const stitchdOrderResolvers = {
     },
 
     deleteStitchdOrder: async (_p, { id }, context) => {
-      const tailorId = requireTailor(context);
+      const { tailorId } = await requirePermission(context, 'orders:delete');
       try {
         return await StitchdOrderModel.remove(tailorId, id);
       } catch (e) { throw wrap(e, 'Could not delete the order'); }

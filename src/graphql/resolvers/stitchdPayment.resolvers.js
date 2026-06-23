@@ -6,7 +6,7 @@
  */
 import { GraphQLError } from 'graphql';
 import StitchdPaymentModel from '../../modules/stitchd/stitchdPayment.model.js';
-import { requireTailor } from '../stitchd.guard.js';
+import { requireTailor, requirePermission } from '../stitchd.guard.js';
 import logger from '../../core/logger/index.js';
 
 const SORT_MAP = { AMOUNT: 'AMOUNT', AGE: 'AGE' };
@@ -50,7 +50,7 @@ const stitchdPaymentResolvers = {
 
   Mutation: {
     recordStitchdCashPayment: async (_p, { input }, context) => {
-      const tailorId = requireTailor(context);
+      const { tailorId } = await requirePermission(context, 'payments:collect');
       try {
         return await StitchdPaymentModel.recordCash(tailorId, input);
       } catch (e) { throw wrap(e, 'Could not record the payment'); }

@@ -18,6 +18,7 @@ import {
 import { generateActivationCode } from '../../core/utils/randomCode.js';
 import { generateRandomBase64, hashPassword } from '../../core/utils/crypto.js';
 import StitchdTailorProfileModel from '../../modules/tailors/stitchdTailorProfile.model.js';
+import StitchdTeamModel from '../../modules/stitchd/stitchdTeam.model.js';
 import { requireTailor } from '../stitchd.guard.js';
 import termiiService from '../../services/termii.service.js';
 import logger from '../../core/logger/index.js';
@@ -230,6 +231,25 @@ const stitchdAuthResolvers = {
           'UPDATE stitchd_phone_otps SET consumed_at = now() WHERE id = $1',
           [otp.id]
         );
+
+        // ── Team-member login (batch 16): if this phone is a member of a tenant, sign in
+        // as a sub-user of the OWNER's tenant (not a new tenant of their own). ──────────
+        const membership = await StitchdTeamModel.membershipByPhone(phoneDigits);
+        if (membership) {
+          const member = await StitchdTeamModel.acceptOnLogin(membership);
+          const memberPayload = {
+            id: member.id, email: null, role: 'tailor', type: 'tailor',
+            stitchdTailorId: member.tailor_id, memberId: member.id, memberRole: member.role,
+          };
+          const ownerTailor = await resolveStitchdTailorOrThrow(member.tailor_id);
+          return {
+            accessToken: generateAccessToken(memberPayload),
+            refreshToken: generateRefreshToken(memberPayload),
+            type: 'member',
+            isNewTailor: false,
+            tailor: ownerTailor,
+          };
+        }
 
         // Resolve or create the tenant.
         let tailorRow = await findStitchdTailorRowByPhone(phoneDigits);

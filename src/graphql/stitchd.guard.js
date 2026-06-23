@@ -55,4 +55,34 @@ export const requireTailor = (context) => {
   });
 };
 
+/**
+ * Permission-enforcing guard (batch 16). Resolves the tenant via `requireTailor`, then:
+ *   - OWNER session (no `memberId`): implicitly holds every permission → allowed.
+ *   - MEMBER session: loads the active member row for (tenant, memberId), computes its
+ *     effective permissions, and throws FORBIDDEN if `perm` isn't held. A removed/suspended
+ *     member fails as UNAUTHENTICATED (access revoked immediately).
+ * Returns `{ tailorId, memberId, role }`.
+ */
+export const requirePermission = async (context, perm) => {
+  const tailorId = requireTailor(context);
+  const memberId = context?.memberId || null;
+  if (!memberId) return { tailorId, memberId: null, role: 'owner' };
+
+  const { query } = await import('../infrastructure/database/postgres.js');
+  const { effectivePermissions } = await import('../modules/stitchd/stitchdPermissions.js');
+  const { rows } = await query(
+    'SELECT role, permissions, status FROM stitchd_team_members WHERE id=$1 AND tailor_id=$2',
+    [memberId, tailorId]
+  );
+  const m = rows[0];
+  if (!m || m.status !== 'active') {
+    throw new GraphQLError('Your access has changed. Please sign in again.', { extensions: { code: 'UNAUTHENTICATED' } });
+  }
+  const perms = effectivePermissions(m.role, m.permissions);
+  if (!perms.includes(perm)) {
+    throw new GraphQLError("You don't have permission to do that.", { extensions: { code: 'FORBIDDEN', reason: 'PERMISSION_DENIED', permission: perm } });
+  }
+  return { tailorId, memberId, role: m.role };
+};
+
 export default requireTailor;
