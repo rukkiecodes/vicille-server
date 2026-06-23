@@ -27,6 +27,7 @@ import stitchdPayoutResolvers from './stitchdPayout.resolvers.js';
 import stitchdBillingResolvers from './stitchdBilling.resolvers.js';
 import stitchdAiSuiteResolvers from './stitchdAiSuite.resolvers.js';
 import stitchdRelationshipResolvers from './stitchdRelationship.resolvers.js';
+import stitchdAnalyticsResolvers from './stitchdAnalytics.resolvers.js';
 
 const resolvers = [
   scalarResolvers,
@@ -58,6 +59,7 @@ const resolvers = [
   stitchdBillingResolvers,
   stitchdAiSuiteResolvers,
   stitchdRelationshipResolvers,
+  stitchdAnalyticsResolvers,
 ];
 
 export default resolvers;
