@@ -20,6 +20,10 @@
     {
       "path": "/cron/stitchd-billing",
       "schedule": "0 8 * * *"
+    },
+    {
+      "path": "/cron/stitchd-account-purge",
+      "schedule": "30 8 * * *"
     }
   ]
 }

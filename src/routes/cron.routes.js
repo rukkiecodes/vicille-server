@@ -7,6 +7,7 @@
 import { Router } from 'express';
 import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
 import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
+import StitchdAccountModel from '../modules/stitchd/stitchdAccount.model.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -45,6 +46,19 @@ router.all('/stitchd-billing', async (_req, res) => {
     res.status(200).json({ ok: true, ...trials, ...dunning });
   } catch (err) {
     logger.error('[cron] stitchd billing error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Daily account-deletion purge: hard-delete tenant data past the grace window (batch 15).
+router.all('/stitchd-account-purge', async (_req, res) => {
+  try {
+    const results = await StitchdAccountModel.purgeDue();
+    const purged = results.filter((r) => r.purged).length;
+    logger.info('[cron] stitchd account purge', { candidates: results.length, purged });
+    res.status(200).json({ ok: true, candidates: results.length, purged, results });
+  } catch (err) {
+    logger.error('[cron] stitchd account purge error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });
