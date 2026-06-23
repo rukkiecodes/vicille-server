@@ -3,6 +3,7 @@ import healthRoutes    from './health.routes.js';
 import internalRoutes  from './internal.routes.js';
 import cronRoutes      from './cron.routes.js';
 import portalRoutes    from './portal.routes.js';
+import webhookRoutes   from './webhook.routes.js';
 import affiliateRoutes from '../modules/affiliates/affiliate.routes.js';
 
 const router = Router();
@@ -15,6 +16,9 @@ router.use('/cron', cronRoutes);
 
 // Public read-only customer portal (token-only, no auth) — batch 18
 router.use('/portal', portalRoutes);
+
+// Public webhooks (WhatsApp delivery status) — batch 21
+router.use('/webhooks', webhookRoutes);
 
 // Internal service-to-service routes (from payments service)
 router.use('/internal', internalRoutes);

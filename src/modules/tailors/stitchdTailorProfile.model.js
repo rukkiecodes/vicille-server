@@ -37,6 +37,7 @@ function format(row, phone = null) {
     weeklyCapacity:     row.weekly_capacity ?? null,
     workingHours:       row.working_hours ?? null,
     autoNotifyStatus:   Boolean(row.auto_notify_status),
+    currency:           row.currency || 'NGN',
     profileComplete:    Boolean(businessName && ownerName && locationCity),
     createdAt:          row.created_at,
   };
@@ -127,6 +128,7 @@ const StitchdTailorProfileModel = {
       specialties:   'specialties',
       logoUrl:       'logo_url',
       ownerPhotoUrl: 'owner_photo_url',
+      currency:      'currency',
     };
 
     for (const [jsKey, col] of Object.entries(colMap)) {
