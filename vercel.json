@@ -28,6 +28,10 @@
     {
       "path": "/cron/stitchd-styleu-expire",
       "schedule": "15 8 * * *"
+    },
+    {
+      "path": "/cron/stitchd-portal-rate-prune",
+      "schedule": "45 8 * * *"
     }
   ]
 }

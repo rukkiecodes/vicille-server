@@ -181,6 +181,38 @@ const StitchdPortalModel = {
     return rows.map((r) => ({ id: r.id, toPhone: r.to_phone, body: r.body, status: r.status, sentAt: r.sent_at }));
   },
 
+  // ── Abuse limiter (fixed window, serverless-safe via Postgres) — migration 066 ──────
+  /**
+   * Atomically increment a per-bucket counter and report whether the request is allowed.
+   * The window self-resets when older than `windowSec`. FAILS OPEN on DB error — rate limiting
+   * is best-effort defense and must never lock real customers out of their order page.
+   */
+  async checkRate(bucket, limit, windowSec) {
+    try {
+      const { rows } = await query(
+        `INSERT INTO stitchd_portal_rate (bucket, window_start, count)
+           VALUES ($1, now(), 1)
+         ON CONFLICT (bucket) DO UPDATE SET
+           window_start = CASE WHEN stitchd_portal_rate.window_start < now() - make_interval(secs => $2)
+                               THEN now() ELSE stitchd_portal_rate.window_start END,
+           count = CASE WHEN stitchd_portal_rate.window_start < now() - make_interval(secs => $2)
+                        THEN 1 ELSE stitchd_portal_rate.count + 1 END
+         RETURNING count`,
+        [bucket, windowSec]
+      );
+      return (rows[0]?.count || 0) <= limit;
+    } catch (e) {
+      logger.error('[portal] rate check failed (fail-open):', e.message);
+      return true;
+    }
+  },
+
+  /** Daily cron: drop stale limiter rows so the table stays small. */
+  async pruneRateLimits(now = new Date()) {
+    const { rowCount } = await query(`DELETE FROM stitchd_portal_rate WHERE window_start < $1::timestamptz - interval '1 day'`, [now]);
+    return { pruned: rowCount };
+  },
+
   async setChannelPref(tailorId, customerId, channel) {
     const ch = channel === 'sms' ? 'sms' : 'whatsapp';
     const { rowCount } = await query(

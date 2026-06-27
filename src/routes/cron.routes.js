@@ -9,6 +9,7 @@ import StitchdPayoutModel from '../modules/stitchd/stitchdPayout.model.js';
 import StitchdBillingModel from '../modules/stitchd/stitchdBilling.model.js';
 import StitchdAccountModel from '../modules/stitchd/stitchdAccount.model.js';
 import StitchdStyleUModel from '../modules/stitchd/stitchdStyleU.model.js';
+import StitchdPortalModel from '../modules/stitchd/stitchdPortal.model.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -72,6 +73,18 @@ router.all('/stitchd-styleu-expire', async (_req, res) => {
     res.status(200).json({ ok: true, expired });
   } catch (err) {
     logger.error('[cron] stitchd styleu expire error:', err);
+    res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+// Prune stale portal rate-limiter rows (post-batch-21 hardening).
+router.all('/stitchd-portal-rate-prune', async (_req, res) => {
+  try {
+    const { pruned } = await StitchdPortalModel.pruneRateLimits();
+    logger.info('[cron] stitchd portal rate prune', { pruned });
+    res.status(200).json({ ok: true, pruned });
+  } catch (err) {
+    logger.error('[cron] stitchd portal rate prune error:', err);
     res.status(500).json({ ok: false, error: err.message });
   }
 });

@@ -46,9 +46,25 @@ function notFound(res) {
   return res.status(404).send(shell('Not found', `<div class="card"><h2>Link not available</h2><p class="muted" style="margin-top:8px">This link is invalid, has expired, or was turned off. Please ask your tailor for a new one.</p></div>`));
 }
 
+function tooMany(res) {
+  return res.status(429).send(shell('Slow down', `<div class="card"><h2>Too many attempts</h2><p class="muted" style="margin-top:8px">Please wait a moment and try again.</p></div>`));
+}
+
+// Trusted client IP on Vercel (x-vercel-forwarded-for is set by the platform, not client-spoofable).
+function clientIp(req) {
+  return (
+    req.headers['x-vercel-forwarded-for'] ||
+    req.headers['x-real-ip'] ||
+    String(req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+    req.ip || 'unknown'
+  );
+}
+
 // GET /portal/:token — the customer's read-only page.
 router.get('/:token', async (req, res) => {
   try {
+    // Generous per-IP cap — lets a real customer refresh freely, blunts scraping floods.
+    if (!(await StitchdPortalModel.checkRate(`view:${clientIp(req)}`, 60, 60))) return tooMany(res);
     const p = await StitchdPortalModel.resolveToken(req.params.token);
     if (!p) return notFound(res);
 
@@ -82,6 +98,12 @@ router.get('/:token', async (req, res) => {
 // GET /portal/:token/pay — start a Paystack payment for the order's balance.
 router.get('/:token/pay', async (req, res) => {
   try {
+    // Strict caps on the costly path (each hit triggers a Paystack init): per-IP AND per-token.
+    const ip = clientIp(req);
+    if (!(await StitchdPortalModel.checkRate(`pay:${ip}`, 10, 600)) ||
+        !(await StitchdPortalModel.checkRate(`pay:${req.params.token}`, 5, 600))) {
+      return tooMany(res);
+    }
     const result = await StitchdPortalModel.initPayment(req.params.token);
     if (result?.authUrl) return res.redirect(302, result.authUrl);
     return res.send(shell('Nothing to pay', `<div class="card"><h2>${esc(result?.message || 'Nothing to pay right now.')}</h2></div>`));
