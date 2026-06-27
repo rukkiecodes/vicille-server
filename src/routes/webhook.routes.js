@@ -4,6 +4,7 @@
  */
 import { Router } from 'express';
 import StitchdWaModel from '../modules/stitchd/stitchdWa.model.js';
+import { verifyWebhookSignature } from '../services/whatsapp.service.js';
 import logger from '../core/logger/index.js';
 
 const router = Router();
@@ -21,8 +22,14 @@ router.get('/whatsapp', (req, res) => {
 
 // Delivery-status events → update stitchd_wa_messages.
 router.post('/whatsapp', async (req, res) => {
+  // Reject forged callbacks: HMAC-SHA256 of the raw body must match Meta's signature header
+  // (enforced once WHATSAPP_APP_SECRET is set; a no-op until WhatsApp is onboarded).
+  if (!verifyWebhookSignature(req.rawBody, req.headers['x-hub-signature-256'])) {
+    logger.warn('[webhook] whatsapp: invalid signature — rejected');
+    return res.sendStatus(401);
+  }
   try { await StitchdWaModel.ingestWebhook(req.body); } catch (e) { logger.error('[webhook] whatsapp:', e.message); }
-  return res.sendStatus(200); // always ack so Meta doesn't retry-storm
+  return res.sendStatus(200); // ack valid events so Meta doesn't retry-storm
 });
 
 export default router;

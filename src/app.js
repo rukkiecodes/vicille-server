@@ -51,6 +51,7 @@ app.use((req, res, next) => {
   if (req.path.startsWith('/webhooks')) {
     // Parse raw body for webhooks
     if (Buffer.isBuffer(req.body)) {
+      req.rawBody = req.body; // preserve raw bytes for signature verification (Meta X-Hub-Signature-256)
       req.body = JSON.parse(req.body.toString());
     }
   }

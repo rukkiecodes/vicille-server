@@ -4,12 +4,35 @@
  * (batch 18) or a manual wa.me deep link (batch 06). Per-template approval + onboarding are
  * operational (per the plan); keep the deep-link fallback always available.
  */
+import crypto from 'crypto';
+
 const TOKEN = process.env.WHATSAPP_TOKEN || '';
 const PHONE_ID = process.env.WHATSAPP_PHONE_ID || '';
 const API_VERSION = process.env.WHATSAPP_API_VERSION || 'v21.0';
+const APP_SECRET = process.env.WHATSAPP_APP_SECRET || '';
 
 export function isConfigured() {
   return Boolean(TOKEN && PHONE_ID);
+}
+
+/** True once an app secret is set — i.e. webhook signature verification is enforced. */
+export function signatureEnforced() {
+  return Boolean(APP_SECRET);
+}
+
+/**
+ * Verify Meta's `X-Hub-Signature-256` (sha256=<hex> of the RAW body, HMAC'd with the app secret).
+ * Returns true when no app secret is configured (verification disabled until onboarding) so the
+ * dormant/unconfigured path keeps working; once WHATSAPP_APP_SECRET is set, a missing/invalid
+ * signature returns false. Constant-time comparison.
+ */
+export function verifyWebhookSignature(rawBody, signatureHeader) {
+  if (!APP_SECRET) return true;
+  if (!signatureHeader || !rawBody || !rawBody.length) return false;
+  const expected = `sha256=${crypto.createHmac('sha256', APP_SECRET).update(rawBody).digest('hex')}`;
+  const a = Buffer.from(String(signatureHeader));
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /** Normalize to E.164 digits (no '+'). */
