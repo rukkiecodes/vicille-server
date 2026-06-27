@@ -107,6 +107,28 @@ const StitchdWaModel = {
     return { channel: 'manual', body };
   },
 
+  /**
+   * Auto-notify on an order reaching "Ready" (batch 21). Gathers the template params and routes
+   * through notifyCustomer — WA-API for opted-in customers, SMS by preference, else 'manual'
+   * (the tailor still gets the manual share prompt on the client). Best-effort; returns the channel.
+   */
+  async notifyOrderReady(tailorId, orderId) {
+    const { rows } = await query(
+      `SELECT o.customer_id, c.name AS customer_name, p.business_name
+         FROM stitchd_orders o
+         JOIN stitchd_customers c ON c.id = o.customer_id
+         LEFT JOIN stitchd_tailor_profile p ON p.tailor_id = o.tailor_id
+        WHERE o.id=$1 AND o.tailor_id=$2`,
+      [orderId, tailorId]
+    );
+    const r = rows[0];
+    if (!r) return { channel: 'manual' };
+    return this.notifyCustomer(tailorId, r.customer_id, 'order_ready', {
+      customerName: (r.customer_name || '').split(' ')[0] || 'there',
+      businessName: r.business_name || 'your tailor',
+    });
+  },
+
   /** Webhook ingest: Meta delivery statuses → update stitchd_wa_messages by provider_ref. */
   async ingestWebhook(payload) {
     try {

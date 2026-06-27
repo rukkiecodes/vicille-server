@@ -82,6 +82,10 @@ const stitchdCustomerTypeDefs = gql`
 
     "Colour-coded segmentation tags (batch 13)."
     tags: [StitchdCustomerTag!]!
+
+    "Preferred channel (whatsapp|sms) + WhatsApp auto-notify opt-in (batches 18/21)."
+    preferredChannel: String!
+    waAutoOptin: Boolean!
   }
 
   type StitchdCustomerTag {

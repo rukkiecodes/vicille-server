@@ -43,6 +43,8 @@ function format(row) {
     address:        row.address || null,
     landmark:       row.landmark || null,
     notes:          row.notes || null,
+    preferredChannel: row.preferred_channel || 'whatsapp',
+    waAutoOptin:    Boolean(row.wa_auto_optin),
     createdAt:      row.created_at,
     updatedAt:      row.updated_at,
   };

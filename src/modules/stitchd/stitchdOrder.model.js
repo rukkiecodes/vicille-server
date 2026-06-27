@@ -361,6 +361,15 @@ const StitchdOrderModel = {
           .catch((e) => logger.error('[order] Style-U delivery hook failed:', e.message));
       }
 
+      // Auto-notify on "Ready" (batch 21): opted-in customers get an automatic WhatsApp/SMS update.
+      // Non-opted-in customers fall through to 'manual' (no-op here) and the client shows the manual
+      // share prompt instead. Best-effort; dynamic import avoids a circular dependency.
+      if (target === 'Ready') {
+        import('./stitchdWa.model.js')
+          .then(({ default: Wa }) => Wa.notifyOrderReady(tailorId, id))
+          .catch((e) => logger.error('[order] Ready auto-notify failed:', e.message));
+      }
+
       return this.findById(tailorId, id);
     } catch (err) {
       await client.query('ROLLBACK').catch(() => {});
